@@ -47,23 +47,41 @@ rmdir "$APP/Frameworks" 2>/dev/null || true
   otool -L "$BIN" | grep -E 'XCTest|XCT' || true
 } >> "$EVIDENCE"
 
-SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-mkdir -p "$APP/Frameworks"
-xcrun -sdk iphoneos clang -dynamiclib -arch arm64 -isysroot "$SDK" -mios-version-min=16.0 -install_name '@rpath/libXCTCompatShim.dylib' -framework Foundation -o "$APP/Frameworks/libXCTCompatShim.dylib" iCTRLCompat/XCTCompatShim.m
-if ! otool -L "$BIN" | grep -q libXCTCompatShim; then
-  T="$BIN.patching"; cp "$BIN" "$T"
-  python3 Scripts/insert-dylib.py "$T" '@rpath/libXCTCompatShim.dylib'
-  O="$(python3 Scripts/dylib-ordinal.py "$T" libXCTCompatShim)"
-  python3 Scripts/retarget-bind-ordinal.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' "$O"
-  python3 Scripts/retarget-undef-symbol.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' libXCTCompatShim
-  {
-    echo "=== XCTCommandLineToolHelper post-patch symbol evidence ==="
-    nm -um "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
-    xcrun dyld_info -imports "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
-    echo "=== Runner libraries after shim insertion ==="
-    otool -L "$T" | grep -E 'XCTest|XCT' || true
-  } >> "$EVIDENCE"
-  mv "$T" "$BIN"
+# The v1.98.12 compatibility shim is only needed when the Xcode-provided
+# XCTRunner stub actually imports XCTCommandLineToolHelper. Xcode 16.4's stub
+# may not contain that hard reference at all. Decide from the built binary,
+# rather than treating "nothing to retarget" as success or blindly deleting
+# the compatibility path.
+NEEDS_XCT_COMPAT=0
+if nm -um "$BIN" 2>/dev/null | grep -Fq 'XCTCommandLineToolHelper'; then
+  NEEDS_XCT_COMPAT=1
+elif xcrun dyld_info -imports "$BIN" 2>/dev/null | grep -Fq 'XCTCommandLineToolHelper'; then
+  NEEDS_XCT_COMPAT=1
+fi
+
+if [[ "$NEEDS_XCT_COMPAT" == 1 ]]; then
+  echo "xct_compat_shim=REQUIRED_SYMBOL_PRESENT" >> "$EVIDENCE"
+  SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+  mkdir -p "$APP/Frameworks"
+  xcrun -sdk iphoneos clang -dynamiclib -arch arm64 -isysroot "$SDK" -mios-version-min=16.0 -install_name '@rpath/libXCTCompatShim.dylib' -framework Foundation -o "$APP/Frameworks/libXCTCompatShim.dylib" iCTRLCompat/XCTCompatShim.m
+  if ! otool -L "$BIN" | grep -q libXCTCompatShim; then
+    T="$BIN.patching"; cp "$BIN" "$T"
+    python3 Scripts/insert-dylib.py "$T" '@rpath/libXCTCompatShim.dylib'
+    O="$(python3 Scripts/dylib-ordinal.py "$T" libXCTCompatShim)"
+    python3 Scripts/retarget-bind-ordinal.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' "$O"
+    python3 Scripts/retarget-undef-symbol.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' libXCTCompatShim
+    {
+      echo "=== XCTCommandLineToolHelper post-patch symbol evidence ==="
+      nm -um "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+      xcrun dyld_info -imports "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+      echo "=== Runner libraries after shim insertion ==="
+      otool -L "$T" | grep -E 'XCTest|XCT' || true
+    } >> "$EVIDENCE"
+    mv "$T" "$BIN"
+  fi
+else
+  echo "xct_compat_shim=SKIPPED_SYMBOL_NOT_PRESENT" >> "$EVIDENCE"
+  echo "Xcode Runner has no XCTCommandLineToolHelper undefined symbol/import; no compat retarget is required." >> "$EVIDENCE"
 fi
 find "$APP" -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
 "$PB" -c 'Delete :CFBundleURLTypes' "$APP/Info.plist" 2>/dev/null || true
@@ -78,7 +96,7 @@ find "$APP" -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
 RID="$("$PB" -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
 "$PB" -c "Set :CFBundleIdentifier $RID" "$XCTEST/Info.plist"
 find "$APP" -name embedded.mobileprovision -delete
-codesign --force --timestamp=none --sign - "$APP/Frameworks/libXCTCompatShim.dylib"
+if [[ -f "$APP/Frameworks/libXCTCompatShim.dylib" ]]; then codesign --force --timestamp=none --sign - "$APP/Frameworks/libXCTCompatShim.dylib"; fi
 codesign --force --timestamp=none --sign - "$XCTEST"
 codesign --force --timestamp=none --sign - "$APP"
 codesign --verify --deep --strict "$APP"
