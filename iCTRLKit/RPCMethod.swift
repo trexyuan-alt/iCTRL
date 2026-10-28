@@ -31,6 +31,14 @@ struct RPCMethodRegistry {
             returns: "{allow_remote_access, listen_port, address, restarted, device_name, lan_addresses, ipv4_interfaces, nearby:{enabled, advertising, status, interface, name, device_id, port}, active_sessions, sessions:[{session_id, client_name, tok, granted_at, last_active_at, expires_at, last_address, last_via: local (this device or USB) | lan | nearby (AWDL) | vpn | cellular | other}], cleared_sessions}"
         ),
         RPCMethodDef(
+            name: "xctest_overlay_experiment",
+            description: "TEST BUILD ONLY. Read the current XCTest runner-session probe state, or make the one-shot finishInitializationForUIAutomation lifecycle call used to test whether the physical Automation Running overlay can disappear while iCTRL's existing control paths remain alive. This method never synthesizes input, resets authorization, restarts XCTest, or performs recovery.",
+            params: [
+                RPCParamDef(name: "action", type: "string", required: false, description: "status (default) | finish_initialization. finish_initialization is accepted only once per runner process."),
+            ],
+            returns: "{action, attempted, session_alive, finish_selector_available, daemon_proxy_alive, invoked?, diagnostic?, authorization_valid, touch_path_changed, next_probe}"
+        ),
+        RPCMethodDef(
             name: "stream_ticket",
             description: "Mint a single-use, ~60s ticket authorizing ONE plain GET to /stream or /logs*. Those are raw byte responses a browser/player fetches directly, so they can't carry a per-request encrypted envelope; this hands out a short-lived credential instead. Call it over the encrypted channel (like every RPC), then append ?ticket=<ticket> to the URL. The ticket is consumed on first use — mint a new one per stream/log fetch.",
             params: [],
@@ -418,6 +426,7 @@ struct RPCMethodRegistry {
         "screen_text",         // Vision OCR fallback when the AX tree has no on-screen rows
         "cli_binary",          // GET /skill/clients/cli — static aarch64-musl client
         "nearby_discovery",    // Bonjour over peer-to-peer Wi-Fi (AWDL) on port+1, when turned on
+        "xctest_overlay_experiment", // test-build-only lifecycle probe
     ]
 
     static func generateSchemaDocument() -> [String: Any] {

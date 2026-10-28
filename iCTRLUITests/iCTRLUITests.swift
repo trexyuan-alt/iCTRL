@@ -982,6 +982,7 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
         "scroll_to_element", "scroll_to", "find_element", "tap_element", "find_and_tap",
         "launch_app", "activate_app", "terminate_app",
         "home", "lock", "unlock",
+        "xctest_overlay_experiment",
         // device_info reads app.frame to report the coordinate space. That is an
         // XCUITest call, so it must hop to the main thread — and it cannot use
         // UIScreen instead: the runner runs in iOS compatibility mode and would
@@ -1245,6 +1246,8 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 let work = {
                     if method == "config" {
                         result = self.handleConfig(params)
+                    } else if method == "xctest_overlay_experiment" {
+                        result = self.handleXCTestOverlayExperiment(params)
                     } else if let handler = self.actionHandler {
                         let reason = ObjCException.catching {
                             result = handler.dispatch(method: method, params: params)
@@ -1352,6 +1355,65 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 self?.videoStreamers.remove(streamer)
                 self?.videoStreamersLock.unlock()
             })
+        }
+    }
+
+    // MARK: - XCTest overlay lifecycle experiment
+
+    /// Test-build-only. The experiment is deliberately separate from the
+    /// ordinary ActionHandler so the normal tap/swipe/type/page_source paths are
+    /// not modified. It also performs no recovery: a broken session is evidence.
+    private func handleXCTestOverlayExperiment(_ params: [String: JSONValue]?) -> ([String: JSONValue]?, JSONRPCError?) {
+        let action = params?["action"]?.stringValue ?? "status"
+
+        func probe(_ actionName: String) -> [String: JSONValue] {
+            [
+                "action": .string(actionName),
+                "attempted": .bool(XCTestOverlayExperiment.wasAttempted()),
+                "session_alive": .bool(XCTestOverlayExperiment.sharedSessionAvailable()),
+                "finish_selector_available": .bool(XCTestOverlayExperiment.finishInitializationAvailable()),
+                "daemon_proxy_alive": .bool(XCTestOverlayExperiment.daemonProxyAvailable()),
+                // Do not claim authorization survived merely because the object
+                // graph is still present. Existing iCTRL UI RPCs are the proof.
+                "authorization_valid": .string("UNKNOWN_UNTIL_EXISTING_UI_RPC_PROBE"),
+                "touch_path_changed": .bool(false),
+                "build_timestamp": .string(RPCMethodRegistry.buildTimestamp),
+                "baseline_server_version": .string(RPCMethodRegistry.serverVersion),
+                "next_probe": .string("Use the existing iCTRL RPCs only: tap/swipe/type/home/launch_app/page_source/screenshot. Do not auto-retry failures."),
+            ]
+        }
+
+        switch action {
+        case "status":
+            return (probe("status"), nil)
+
+        case "finish_initialization":
+            Self.logBuffer.append("🧪 XCTest overlay experiment: invoking finishInitializationForUIAutomation (one-shot; no recovery)")
+            let diagnostic = XCTestOverlayExperiment.invokeFinishInitializationAndReturnError()
+            var out = probe("finish_initialization")
+            if let diagnostic {
+                let message = String(diagnostic)
+                out["invoked"] = .bool(false)
+                out["diagnostic"] = .string(message)
+                Self.logBuffer.append("🧪 XCTest overlay experiment: NOT INVOKED / FAILED — \(message)")
+            } else {
+                out["invoked"] = .bool(true)
+                out["diagnostic"] = .string("finishInitializationForUIAutomation returned without an Objective-C exception")
+                Self.logBuffer.append(
+                    "🧪 XCTest overlay experiment: call returned; "
+                    + "session_alive=\(XCTestOverlayExperiment.sharedSessionAvailable()) "
+                    + "daemon_proxy_alive=\(XCTestOverlayExperiment.daemonProxyAvailable()). "
+                    + "Authorization/touch/page_source remain UNPROVEN until ordinary RPC probes run."
+                )
+            }
+            return (out, nil)
+
+        default:
+            return (nil, JSONRPCError(
+                code: -32602,
+                message: "xctest_overlay_experiment.action must be 'status' or 'finish_initialization'",
+                data: nil
+            ))
         }
     }
 

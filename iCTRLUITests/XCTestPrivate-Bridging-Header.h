@@ -8,6 +8,7 @@
 #import "ForegroundApp.h"
 #import "QuiescenceDisabler.h"
 #import "ObjCException.h"
+#import "XCTestOverlayExperiment.h"
 
 @interface EarlyURLHook : NSObject
 + (NSArray<NSURL *> *)drainURLs;
