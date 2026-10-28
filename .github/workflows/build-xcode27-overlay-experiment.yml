@@ -1,0 +1,183 @@
+name: Build Xcode27 XCTest overlay experiment
+
+on:
+  push:
+    branches: [xctest-overlay-experiment]
+    paths: [.github/workflows/build-xcode27-overlay-experiment.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-experiment:
+    runs-on: xcode-27
+    timeout-minutes: 75
+    env:
+      BASELINE_SHA: d88bbf0b3a5addead31b4298d605d7ac7a87d6e7
+      EXPERIMENT_SHA: 2b358f5cd059f5e1d365db0029ca87af1ceedee7
+      IDEVICE_VERSION: v0.1.68
+      VALIDATED_CLEAN_ARTIFACT_ID: "12791490800"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin Xcode 27.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.1.app/Contents/Developer
+          sw_vers | tee xcode27-env.txt
+          xcodebuild -version | tee -a xcode27-env.txt
+          xcrun --sdk iphoneos --show-sdk-version | tee -a xcode27-env.txt
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version | tee -a xcode27-env.txt
+
+      - name: Verify exact 5-file semantic delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$EXPERIMENT_SHA^{commit}"
+          cat > expected-files.txt <<'EOF'
+          iCTRLKit/RPCMethod.swift
+          iCTRLUITests/XCTestOverlayExperiment.h
+          iCTRLUITests/XCTestOverlayExperiment.m
+          iCTRLUITests/XCTestPrivate-Bridging-Header.h
+          iCTRLUITests/iCTRLUITests.swift
+          EOF
+          git diff --name-only "$BASELINE_SHA" "$EXPERIMENT_SHA" | sort > actual-files.txt
+          sort expected-files.txt -o expected-files.txt
+          diff -u expected-files.txt actual-files.txt
+          test "$(git rev-list --count "$BASELINE_SHA..$EXPERIMENT_SHA")" = "1"
+
+      - name: Prepare exact experiment source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/exp" "$EXPERIMENT_SHA"
+          test "$(git -C "$RUNNER_TEMP/exp" rev-parse HEAD)" = "$EXPERIMENT_SHA"
+          grep -Fq xctest_overlay_experiment "$RUNNER_TEMP/exp/iCTRLKit/RPCMethod.swift"
+          grep -Fq finishInitializationForUIAutomation "$RUNNER_TEMP/exp/iCTRLUITests/XCTestOverlayExperiment.m"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/idevice.zip"             "https://github.com/jkcoxson/idevice/releases/download/$IDEVICE_VERSION/idevice-xcframework-$IDEVICE_VERSION.zip"
+
+      - name: Build Xcode27 experimental Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/build
+          bash .github/scripts/build-unsigned-runner.sh             "$RUNNER_TEMP/exp"             ictrl-v1.98.12-xctest-overlay-experiment-xcode27.ipa             experiment             "$EXPERIMENT_SHA"             "$RUNNER_TEMP/idevice.zip"             "$GITHUB_WORKSPACE/evidence/build/build-evidence.txt"
+
+      - name: Download previously validated CLEAN Xcode27 artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p validated-clean
+          curl -fL --retry 3             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             -o validated-clean/artifact.zip             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/$VALIDATED_CLEAN_ARTIFACT_ID/zip"
+          unzip -q validated-clean/artifact.zip -d validated-clean/unpacked
+          CLEAN_IPA="$(find validated-clean/unpacked -name 'ictrl-v1.98.12-baseline-xcode27-clean.ipa' -type f | head -1)"
+          test -s "$CLEAN_IPA"
+          echo "CLEAN_IPA=$CLEAN_IPA" >> "$GITHUB_ENV"
+
+      - name: Validate experiment against real-device-validated CLEAN baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inspect/clean inspect/exp evidence/validation
+          unzip -q "$CLEAN_IPA" -d inspect/clean
+          unzip -q ictrl-v1.98.12-xctest-overlay-experiment-xcode27.ipa -d inspect/exp
+
+          CA="$(find inspect/clean/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          EA="$(find inspect/exp/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          CX="$CA/PlugIns/iCTRLUITests.xctest"
+          EX="$EA/PlugIns/iCTRLUITests.xctest"
+          test -d "$CA"; test -d "$EA"; test -d "$CX"; test -d "$EX"
+
+          python3 - "$CA/Info.plist" "$EA/Info.plist" "$CX/Info.plist" "$EX/Info.plist" <<'PY'
+          import plistlib,sys,json
+          cp,ep,cxp,exp=sys.argv[1:]
+          c=plistlib.load(open(cp,'rb')); e=plistlib.load(open(ep,'rb'))
+          cx=plistlib.load(open(cxp,'rb')); ex=plistlib.load(open(exp,'rb'))
+          critical_runner=[
+            'CFBundleIdentifier','CFBundleExecutable','CFBundlePackageType',
+            'CFBundleURLTypes','NSBonjourServices','MinimumOSVersion',
+            'DTXcode','DTXcodeBuild','DTSDKName','UIApplicationSceneManifest'
+          ]
+          critical_xctest=['CFBundleIdentifier','CFBundleExecutable','MinimumOSVersion','DTXcode','DTXcodeBuild','DTSDKName']
+          report={
+            'validated_clean_runner':{k:c.get(k) for k in critical_runner},
+            'experiment_runner':{k:e.get(k) for k in critical_runner},
+            'validated_clean_xctest':{k:cx.get(k) for k in critical_xctest},
+            'experiment_xctest':{k:ex.get(k) for k in critical_xctest},
+          }
+          open('evidence/validation/runtime-metadata.json','w').write(json.dumps(report,indent=2,sort_keys=True))
+          assert e.get('DTXcode') == c.get('DTXcode') == '2710'
+          assert e.get('DTXcodeBuild') == c.get('DTXcodeBuild') == '27A9272'
+          assert ex.get('DTXcode') == cx.get('DTXcode') == '2710'
+          assert ex.get('DTXcodeBuild') == cx.get('DTXcodeBuild') == '27A9275'
+          assert e.get('UIApplicationSceneManifest') == c.get('UIApplicationSceneManifest')
+          assert e.get('CFBundleURLTypes') == c.get('CFBundleURLTypes')
+          assert e.get('NSBonjourServices') == c.get('NSBonjourServices')
+          assert e.get('MinimumOSVersion') == c.get('MinimumOSVersion') == '17.0'
+          assert ex.get('MinimumOSVersion') == cx.get('MinimumOSVersion') == '16.0'
+          PY
+
+          CB="$CA/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CA/Info.plist")"
+          EB="$EA/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EA/Info.plist")"
+          CXB="$CX/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CX/Info.plist")"
+          EXB="$EX/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EX/Info.plist")"
+
+          # Both validated CLEAN and experiment must retain the official-generation compat shim.
+          test -f "$CA/Frameworks/libXCTCompatShim.dylib"
+          test -f "$EA/Frameworks/libXCTCompatShim.dylib"
+          nm -um "$CB" 2>&1 | grep -F '_OBJC_CLASS_$_XCTCommandLineToolHelper' | grep -F 'libXCTCompatShim'
+          nm -um "$EB" 2>&1 | grep -F '_OBJC_CLASS_$_XCTCommandLineToolHelper' | grep -F 'libXCTCompatShim'
+          xcrun dyld_info -imports "$EB" 2>&1 | grep -F '_OBJC_CLASS_$_XCTCommandLineToolHelper' | grep -F 'libXCTCompatShim'
+
+          # Validated CLEAN must remain clean; experimental binary must contain both markers.
+          ! strings "$CXB" | grep -Fq xctest_overlay_experiment
+          ! strings "$CXB" | grep -Fq finishInitializationForUIAutomation
+          strings "$EXB" | grep -F xctest_overlay_experiment >/dev/null
+          strings "$EXB" | grep -F finishInitializationForUIAutomation >/dev/null
+
+          # Credential-free pre-SideStore model: no embedded provisioning profiles.
+          ! find "$EA" -name '*.mobileprovision' | grep -q .
+          codesign --verify --deep --strict "$EA"
+
+          SHA="$(shasum -a 256 ictrl-v1.98.12-xctest-overlay-experiment-xcode27.ipa | awk '{print $1}')"
+          {
+            echo "source_commit=$EXPERIMENT_SHA"
+            echo "artifact=ictrl-v1.98.12-xctest-overlay-experiment-xcode27.ipa"
+            echo "sha256=$SHA"
+            echo "runner_DTXcodeBuild=27A9272"
+            echo "xctest_DTXcodeBuild=27A9275"
+            echo "scene_manifest=MATCH_VALIDATED_CLEAN"
+            echo "ictrl_url_scheme=MATCH_VALIDATED_CLEAN"
+            echo "bonjour=MATCH_VALIDATED_CLEAN"
+            echo "compat_shim=PRESENT"
+            echo "xctcommandlinetoolhelper=RETARGETED_TO_libXCTCompatShim"
+            echo "experiment_rpc_marker=PRESENT"
+            echo "finishInitializationForUIAutomation_marker=PRESENT"
+            echo "validated_clean_experiment_marker=ABSENT"
+            echo "experiment_delta=EXACTLY_5_SOURCE_FILES"
+            echo "signing=AD_HOC_PRE_SIDESTORE"
+          } | tee evidence/validation/validation.txt
+
+          cp actual-files.txt evidence/validation/experiment-changed-files.txt
+          cp xcode27-env.txt evidence/validation/xcode27-env.txt
+          cat evidence/validation/runtime-metadata.json
+
+      - name: Upload final Xcode27 experiment IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ictrl-v1.98.12-xctest-overlay-experiment-xcode27
+          path: |
+            ictrl-v1.98.12-xctest-overlay-experiment-xcode27.ipa
+            evidence/
+          if-no-files-found: error
+          retention-days: 14
