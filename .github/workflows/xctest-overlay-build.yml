@@ -1,0 +1,112 @@
+name: iCTRL v1.98.12 XCTest overlay experiment build
+
+on:
+  push:
+    branches: [xctest-overlay-experiment]
+    paths: [.github/workflows/xctest-overlay-build.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-both:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      BASELINE_SHA: d88bbf0b3a5addead31b4298d605d7ac7a87d6e7
+      EXPERIMENT_SHA: 2b358f5cd059f5e1d365db0029ca87af1ceedee7
+      IDEVICE_VERSION: v0.1.68
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 16 and install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$P" ]]; then sudo xcode-select -s "$P/Contents/Developer"; fi
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version
+
+      - name: Prepare exact baseline and experiment sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$EXPERIMENT_SHA^{commit}"
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/exp" "$EXPERIMENT_SHA"
+          cat > "$RUNNER_TEMP/expected.txt" <<'EOF'
+          iCTRLKit/RPCMethod.swift
+          iCTRLUITests/XCTestOverlayExperiment.h
+          iCTRLUITests/XCTestOverlayExperiment.m
+          iCTRLUITests/XCTestPrivate-Bridging-Header.h
+          iCTRLUITests/iCTRLUITests.swift
+          EOF
+          git diff --name-only "$BASELINE_SHA" "$EXPERIMENT_SHA" | sort > "$RUNNER_TEMP/actual.txt"
+          sort "$RUNNER_TEMP/expected.txt" -o "$RUNNER_TEMP/expected.txt"
+          diff -u "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/actual.txt"
+          test ! -e "$RUNNER_TEMP/base/iCTRLUITests/XCTestOverlayExperiment.m"
+          ! grep -Fq xctest_overlay_experiment "$RUNNER_TEMP/base/iCTRLKit/RPCMethod.swift"
+          grep -Fq xctest_overlay_experiment "$RUNNER_TEMP/exp/iCTRLKit/RPCMethod.swift"
+          grep -Fq finishInitializationForUIAutomation "$RUNNER_TEMP/exp/iCTRLUITests/XCTestOverlayExperiment.m"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/idevice.zip"             "https://github.com/jkcoxson/idevice/releases/download/$IDEVICE_VERSION/idevice-xcframework-$IDEVICE_VERSION.zip"
+          shasum -a 256 "$RUNNER_TEMP/idevice.zip"
+
+      - name: Build CLEAN rollback IPA
+        shell: bash
+        run: |
+          mkdir -p evidence/baseline
+          bash .github/scripts/build-unsigned-runner.sh             "$RUNNER_TEMP/base"             ictrl-v1.98.12-baseline-rollback.ipa             baseline             "$BASELINE_SHA"             "$RUNNER_TEMP/idevice.zip"             "$GITHUB_WORKSPACE/evidence/baseline/build-evidence.txt"
+
+      - name: Build EXPERIMENTAL IPA
+        shell: bash
+        run: |
+          mkdir -p evidence/experiment
+          cp "$RUNNER_TEMP/actual.txt" evidence/experiment/experiment-changed-files.txt
+          bash .github/scripts/build-unsigned-runner.sh             "$RUNNER_TEMP/exp"             ictrl-v1.98.12-xctest-overlay-experiment.ipa             experiment             "$EXPERIMENT_SHA"             "$RUNNER_TEMP/idevice.zip"             "$GITHUB_WORKSPACE/evidence/experiment/build-evidence.txt"
+
+      - name: Verify both IPA files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ictrl-v1.98.12-baseline-rollback.ipa
+          test -s ictrl-v1.98.12-xctest-overlay-experiment.ipa
+          shasum -a 256 *.ipa | tee evidence/ipa-sha256.txt
+          test "$(shasum -a 256 ictrl-v1.98.12-baseline-rollback.ipa | awk '{print $1}')" !=                "$(shasum -a 256 ictrl-v1.98.12-xctest-overlay-experiment.ipa | awk '{print $1}')"
+
+      - name: Upload CLEAN rollback IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ictrl-v1.98.12-baseline-rollback
+          path: |
+            ictrl-v1.98.12-baseline-rollback.ipa
+            evidence/baseline/
+            evidence/ipa-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload EXPERIMENTAL IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ictrl-v1.98.12-xctest-overlay-experiment
+          path: |
+            ictrl-v1.98.12-xctest-overlay-experiment.ipa
+            evidence/experiment/
+            evidence/ipa-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ictrl-xctest-overlay-build-logs-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
