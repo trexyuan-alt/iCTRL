@@ -3,7 +3,7 @@ name: iCTRL v1.98.12 XCTest overlay experiment build
 on:
   push:
     branches: [xctest-overlay-experiment]
-    paths: [.github/workflows/xctest-overlay-build.yml]
+    paths: [.github/workflows/xctest-overlay-build.yml, .github/scripts/build-unsigned-runner.sh]
   workflow_dispatch:
 
 permissions:
