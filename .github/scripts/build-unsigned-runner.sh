@@ -37,6 +37,16 @@ i=0; for n in AppIcon20x20 AppIcon29x29 AppIcon40x40 AppIcon76x76 AppIcon83.5x83
 rm -rf "$APP/Frameworks/XCTAutomationSupport.framework" "$APP/Frameworks/XCTest.framework" "$APP/Frameworks/XCTestCore.framework" "$APP/Frameworks/XCTestSupport.framework" "$APP/Frameworks/XCUIAutomation.framework" "$APP/Frameworks/XCUnit.framework" "$APP/Frameworks/Testing.framework"
 rm -f "$APP/Frameworks/libXCTestSwiftSupport.dylib"
 rmdir "$APP/Frameworks" 2>/dev/null || true
+# Preserve Mach-O evidence before the compatibility rewrite. This is diagnostic
+# only; it does not change the Runner.
+{
+  echo "=== XCTCommandLineToolHelper pre-patch symbol evidence ==="
+  nm -um "$BIN" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+  xcrun dyld_info -imports "$BIN" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+  echo "=== Runner linked XCTest libraries ==="
+  otool -L "$BIN" | grep -E 'XCTest|XCT' || true
+} >> "$EVIDENCE"
+
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 mkdir -p "$APP/Frameworks"
 xcrun -sdk iphoneos clang -dynamiclib -arch arm64 -isysroot "$SDK" -mios-version-min=16.0 -install_name '@rpath/libXCTCompatShim.dylib' -framework Foundation -o "$APP/Frameworks/libXCTCompatShim.dylib" iCTRLCompat/XCTCompatShim.m
@@ -44,8 +54,15 @@ if ! otool -L "$BIN" | grep -q libXCTCompatShim; then
   T="$BIN.patching"; cp "$BIN" "$T"
   python3 Scripts/insert-dylib.py "$T" '@rpath/libXCTCompatShim.dylib'
   O="$(python3 Scripts/dylib-ordinal.py "$T" libXCTCompatShim)"
-  python3 Scripts/retarget-bind-ordinal.py "$T" '_OBJC_CLASS_$$_XCTCommandLineToolHelper' "$O"
-  python3 Scripts/retarget-undef-symbol.py "$T" '_OBJC_CLASS_$$_XCTCommandLineToolHelper' libXCTCompatShim
+  python3 Scripts/retarget-bind-ordinal.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' "$O"
+  python3 Scripts/retarget-undef-symbol.py "$T" '_OBJC_CLASS_$_XCTCommandLineToolHelper' libXCTCompatShim
+  {
+    echo "=== XCTCommandLineToolHelper post-patch symbol evidence ==="
+    nm -um "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+    xcrun dyld_info -imports "$T" 2>&1 | grep -F 'XCTCommandLineToolHelper' || true
+    echo "=== Runner libraries after shim insertion ==="
+    otool -L "$T" | grep -E 'XCTest|XCT' || true
+  } >> "$EVIDENCE"
   mv "$T" "$BIN"
 fi
 find "$APP" -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
