@@ -1,0 +1,128 @@
+name: Rebuild CLEAN v1.98.12 with official-generation Xcode 27.1
+
+on:
+  push:
+    branches: [xctest-overlay-experiment]
+    paths: [.github/workflows/rebuild-clean-baseline-xcode27.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild-clean:
+    runs-on: xcode-27
+    timeout-minutes: 75
+    env:
+      BASELINE_SHA: d88bbf0b3a5addead31b4298d605d7ac7a87d6e7
+      IDEVICE_VERSION: v0.1.68
+      OFFICIAL_SHA256: d28fcb4775885a7161e8c7aa9f247aeb42fe1af1c7fcfc5ce1bbdb1b07b442f2
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin Xcode 27.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.1.app/Contents/Developer
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version
+
+      - name: Prepare exact clean baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASELINE_SHA"
+          test "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" = "$BASELINE_SHA"
+          test ! -e "$RUNNER_TEMP/base/iCTRLUITests/XCTestOverlayExperiment.m"
+          ! grep -Fq xctest_overlay_experiment "$RUNNER_TEMP/base/iCTRLKit/RPCMethod.swift"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/idevice.zip"             "https://github.com/jkcoxson/idevice/releases/download/$IDEVICE_VERSION/idevice-xcframework-$IDEVICE_VERSION.zip"
+
+      - name: Build credential-free CLEAN Runner with Xcode 27.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/build
+          bash .github/scripts/build-unsigned-runner.sh             "$RUNNER_TEMP/base"             ictrl-v1.98.12-baseline-xcode27-clean.ipa             baseline             "$BASELINE_SHA"             "$RUNNER_TEMP/idevice.zip"             "$GITHUB_WORKSPACE/evidence/build/build-evidence.txt"
+
+      - name: Compare packaging-critical runtime metadata to official release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o official-v1.98.12.ipa             https://github.com/OpenMinis/iCTRL/releases/download/v1.98.12/iCTRLUITests-Runner.ipa
+          test "$(shasum -a 256 official-v1.98.12.ipa | awk '{print $1}')" = "$OFFICIAL_SHA256"
+
+          rm -rf inspect
+          mkdir -p inspect/official inspect/candidate evidence/compare
+          unzip -q official-v1.98.12.ipa -d inspect/official
+          unzip -q ictrl-v1.98.12-baseline-xcode27-clean.ipa -d inspect/candidate
+          OA="$(find inspect/official/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          CA="$(find inspect/candidate/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          OX="$OA/PlugIns/iCTRLUITests.xctest"
+          CX="$CA/PlugIns/iCTRLUITests.xctest"
+
+          python3 - "$OA/Info.plist" "$CA/Info.plist" "$OX/Info.plist" "$CX/Info.plist" <<'PY'
+          import plistlib,sys,json
+          op,cp,oxp,cxp=sys.argv[1:]
+          o=plistlib.load(open(op,'rb')); c=plistlib.load(open(cp,'rb'))
+          ox=plistlib.load(open(oxp,'rb')); cx=plistlib.load(open(cxp,'rb'))
+          critical=[
+            'CFBundleIdentifier','CFBundleExecutable','CFBundlePackageType',
+            'CFBundleURLTypes','NSBonjourServices','MinimumOSVersion',
+            'DTXcode','DTXcodeBuild','DTSDKName','UIApplicationSceneManifest'
+          ]
+          report={'official_runner':{k:o.get(k) for k in critical},
+                  'candidate_runner':{k:c.get(k) for k in critical},
+                  'official_xctest':{k:ox.get(k) for k in critical},
+                  'candidate_xctest':{k:cx.get(k) for k in critical}}
+          open('evidence/compare/runtime-metadata.json','w').write(json.dumps(report,indent=2,sort_keys=True))
+          # Runtime-critical host properties must match the official generation.
+          assert c.get('DTXcode') == o.get('DTXcode') == '2710'
+          assert c.get('DTXcodeBuild') == o.get('DTXcodeBuild') == '27A9272'
+          assert c.get('MinimumOSVersion') == o.get('MinimumOSVersion') == '17.0'
+          assert c.get('UIApplicationSceneManifest') == o.get('UIApplicationSceneManifest')
+          assert c.get('CFBundleURLTypes') == o.get('CFBundleURLTypes')
+          assert c.get('NSBonjourServices') == o.get('NSBonjourServices')
+          assert cx.get('DTXcode') == ox.get('DTXcode') == '2710'
+          assert cx.get('DTXcodeBuild') == ox.get('DTXcodeBuild') == '27A9275'
+          assert cx.get('MinimumOSVersion') == ox.get('MinimumOSVersion') == '16.0'
+          PY
+
+          test -f "$CA/Frameworks/libXCTCompatShim.dylib"
+          CB="$CA/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CA/Info.plist")"
+          nm -um "$CB" 2>&1 | grep -F '_OBJC_CLASS_$_XCTCommandLineToolHelper' | grep -F 'libXCTCompatShim'
+          xcrun dyld_info -imports "$CB" 2>&1 | grep -F '_OBJC_CLASS_$_XCTCommandLineToolHelper' | grep -F 'libXCTCompatShim'
+
+          ! strings "$CX/iCTRLUITests" | grep -Fq xctest_overlay_experiment
+
+          {
+            echo "candidate_sha256=$(shasum -a 256 ictrl-v1.98.12-baseline-xcode27-clean.ipa | awk '{print $1}')"
+            echo "source_commit=$BASELINE_SHA"
+            echo "official_reference_sha256=$OFFICIAL_SHA256"
+            echo "runner_scene_manifest=MATCH"
+            echo "runner_xcode_build=27A9272_MATCH"
+            echo "xctest_xcode_build=27A9275_MATCH"
+            echo "url_scheme=MATCH"
+            echo "bonjour=MATCH"
+            echo "compat_shim=PRESENT_AND_RETARGETED"
+            echo "experiment_marker=ABSENT"
+          } | tee evidence/compare/validation.txt
+
+          cat evidence/compare/runtime-metadata.json
+
+      - name: Upload corrected CLEAN candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ictrl-v1.98.12-baseline-xcode27-clean
+          path: |
+            ictrl-v1.98.12-baseline-xcode27-clean.ipa
+            evidence/
+          if-no-files-found: error
+          retention-days: 14
