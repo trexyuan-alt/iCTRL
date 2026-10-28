@@ -1,0 +1,178 @@
+name: Compare official v1.98.12 Runner packaging
+
+on:
+  push:
+    branches: [xctest-overlay-experiment]
+    paths: [.github/workflows/compare-official-v1.98.12.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      BASELINE_SHA: d88bbf0b3a5addead31b4298d605d7ac7a87d6e7
+      IDEVICE_VERSION: v0.1.68
+      OFFICIAL_SHA256: d28fcb4775885a7161e8c7aa9f247aeb42fe1af1c7fcfc5ce1bbdb1b07b442f2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 16.4 and install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version
+
+      - name: Build cloud CLEAN baseline exactly as current packaging helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASELINE_SHA"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/idevice.zip"             "https://github.com/jkcoxson/idevice/releases/download/$IDEVICE_VERSION/idevice-xcframework-$IDEVICE_VERSION.zip"
+          mkdir -p evidence/cloud
+          bash .github/scripts/build-unsigned-runner.sh             "$RUNNER_TEMP/base"             cloud-baseline.ipa             baseline             "$BASELINE_SHA"             "$RUNNER_TEMP/idevice.zip"             "$GITHUB_WORKSPACE/evidence/cloud/build-evidence.txt"
+
+      - name: Download official v1.98.12 Runner IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o official-v1.98.12.ipa             https://github.com/OpenMinis/iCTRL/releases/download/v1.98.12/iCTRLUITests-Runner.ipa
+          GOT="$(shasum -a 256 official-v1.98.12.ipa | awk '{print $1}')"
+          echo "official_sha256=$GOT" | tee evidence/official-sha256.txt
+          test "$GOT" = "$OFFICIAL_SHA256"
+          shasum -a 256 cloud-baseline.ipa | tee evidence/cloud-sha256.txt
+
+      - name: Compare actual IPA bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf compare
+          mkdir -p compare/official compare/cloud evidence/compare
+          unzip -q official-v1.98.12.ipa -d compare/official
+          unzip -q cloud-baseline.ipa -d compare/cloud
+          OA="$(find compare/official/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          CA="$(find compare/cloud/Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          OX="$OA/PlugIns/iCTRLUITests.xctest"
+          CX="$CA/PlugIns/iCTRLUITests.xctest"
+          test -d "$OA"; test -d "$CA"; test -d "$OX"; test -d "$CX"
+
+          echo "official_app=$OA" > evidence/compare/paths.txt
+          echo "cloud_app=$CA" >> evidence/compare/paths.txt
+
+          python3 - "$OA/Info.plist" "$CA/Info.plist" "$OX/Info.plist" "$CX/Info.plist" <<'PY'
+          import plistlib, json, sys
+          names=["official_runner","cloud_runner","official_xctest","cloud_xctest"]
+          keys=[
+            "CFBundleIdentifier","CFBundleExecutable","CFBundlePackageType",
+            "CFBundleURLTypes","NSBonjourServices","MinimumOSVersion",
+            "DTPlatformVersion","DTXcode","DTXcodeBuild","DTSDKBuild","DTSDKName",
+            "CFBundleSupportedPlatforms","UIDeviceFamily","UIApplicationSceneManifest",
+            "UIApplicationSupportsIndirectInputEvents","UIRequiredDeviceCapabilities",
+            "LSRequiresIPhoneOS","CFBundleDevelopmentRegion"
+          ]
+          out={}
+          for name,path in zip(names,sys.argv[1:]):
+            d=plistlib.load(open(path,"rb"))
+            out[name]={k:d.get(k,"<ABSENT>") for k in keys}
+          open("evidence/compare/selected-plists.json","w").write(json.dumps(out,indent=2,sort_keys=True,default=str))
+          for name,path in zip(names,sys.argv[1:]):
+            d=plistlib.load(open(path,"rb"))
+            open(f"evidence/compare/{name}-full.json","w").write(json.dumps(d,indent=2,sort_keys=True,default=str))
+          PY
+
+          diff -u evidence/compare/official_runner-full.json evidence/compare/cloud_runner-full.json             > evidence/compare/runner-plist.diff || true
+          diff -u evidence/compare/official_xctest-full.json evidence/compare/cloud_xctest-full.json             > evidence/compare/xctest-plist.diff || true
+
+          {
+            echo '=== OFFICIAL runner entitlements ==='
+            codesign -d --entitlements :- "$OA" 2>&1 || true
+            echo '=== CLOUD runner entitlements ==='
+            codesign -d --entitlements :- "$CA" 2>&1 || true
+            echo '=== OFFICIAL xctest entitlements ==='
+            codesign -d --entitlements :- "$OX" 2>&1 || true
+            echo '=== CLOUD xctest entitlements ==='
+            codesign -d --entitlements :- "$CX" 2>&1 || true
+          } > evidence/compare/entitlements.txt
+
+          {
+            echo '=== OFFICIAL runner codesign ==='
+            codesign -dvvv "$OA" 2>&1 || true
+            echo '=== CLOUD runner codesign ==='
+            codesign -dvvv "$CA" 2>&1 || true
+            echo '=== OFFICIAL xctest codesign ==='
+            codesign -dvvv "$OX" 2>&1 || true
+            echo '=== CLOUD xctest codesign ==='
+            codesign -dvvv "$CX" 2>&1 || true
+          } > evidence/compare/codesign.txt
+
+          find "$OA" -type f | sed "s#^$OA/##" | sort > evidence/compare/official-files.txt
+          find "$CA" -type f | sed "s#^$CA/##" | sort > evidence/compare/cloud-files.txt
+          diff -u evidence/compare/official-files.txt evidence/compare/cloud-files.txt             > evidence/compare/file-inventory.diff || true
+
+          OB="$OA/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$OA/Info.plist")"
+          CB="$CA/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CA/Info.plist")"
+          OTB="$OX/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$OX/Info.plist")"
+          CTB="$CX/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CX/Info.plist")"
+
+          {
+            echo '=== SHA256 ==='
+            shasum -a 256 "$OB" "$CB" "$OTB" "$CTB"
+            echo '=== SIZE ==='
+            ls -l "$OB" "$CB" "$OTB" "$CTB"
+            echo '=== OFFICIAL RUNNER vtool ==='
+            xcrun vtool -show-build "$OB" || true
+            echo '=== CLOUD RUNNER vtool ==='
+            xcrun vtool -show-build "$CB" || true
+            echo '=== OFFICIAL XCTEST vtool ==='
+            xcrun vtool -show-build "$OTB" || true
+            echo '=== CLOUD XCTEST vtool ==='
+            xcrun vtool -show-build "$CTB" || true
+          } > evidence/compare/binary-build-info.txt 2>&1
+
+          {
+            echo '=== OFFICIAL runner dylibs ==='; otool -L "$OB"
+            echo '=== CLOUD runner dylibs ==='; otool -L "$CB"
+            echo '=== OFFICIAL xctest dylibs ==='; otool -L "$OTB"
+            echo '=== CLOUD xctest dylibs ==='; otool -L "$CTB"
+          } > evidence/compare/otool-L.txt
+
+          {
+            echo '=== OFFICIAL runner URL/lifecycle strings ==='
+            strings "$OB" | grep -Ei 'scene|openURL|UIApplication|XCTRunner|runTestsInBackground' | sort -u | head -300 || true
+            echo '=== CLOUD runner URL/lifecycle strings ==='
+            strings "$CB" | grep -Ei 'scene|openURL|UIApplication|XCTRunner|runTestsInBackground' | sort -u | head -300 || true
+            echo '=== OFFICIAL xctest iCTRL URL/stop strings ==='
+            strings "$OTB" | grep -Ei 'ictrl|openURL|handleOneURL|stop|callback|EarlyURLHook' | sort -u | head -500 || true
+            echo '=== CLOUD xctest iCTRL URL/stop strings ==='
+            strings "$CTB" | grep -Ei 'ictrl|openURL|handleOneURL|stop|callback|EarlyURLHook' | sort -u | head -500 || true
+          } > evidence/compare/relevant-strings.txt
+
+          {
+            echo '=== OFFICIAL Runner imports XCTCommandLineToolHelper ==='
+            nm -um "$OB" 2>&1 | grep -F XCTCommandLineToolHelper || true
+            xcrun dyld_info -imports "$OB" 2>&1 | grep -F XCTCommandLineToolHelper || true
+            echo '=== CLOUD Runner imports XCTCommandLineToolHelper ==='
+            nm -um "$CB" 2>&1 | grep -F XCTCommandLineToolHelper || true
+            xcrun dyld_info -imports "$CB" 2>&1 | grep -F XCTCommandLineToolHelper || true
+          } > evidence/compare/xctcommandline-evidence.txt
+
+          cat evidence/compare/selected-plists.json
+          cat evidence/compare/runner-plist.diff
+          cat evidence/compare/entitlements.txt
+
+      - name: Upload comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-vs-cloud-v1.98.12-comparison-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
