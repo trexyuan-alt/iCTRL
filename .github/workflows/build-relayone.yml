@@ -1,0 +1,53 @@
+name: Build RelayOne Companion
+
+on:
+  push:
+    branches:
+      - relayone-companion-20261102
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate standalone project
+        run: xcodegen generate --spec RelayOne/project.yml --project RelayOne/RelayOne.xcodeproj
+
+      - name: Build unsigned device app
+        run: |
+          xcodebuild build             -project RelayOne/RelayOne.xcodeproj             -scheme RelayOne             -configuration Release             -sdk iphoneos             -destination "generic/platform=iOS"             -derivedDataPath RelayOne/build             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=             DEVELOPMENT_TEAM=             ARCHS=arm64
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP="RelayOne/build/Build/Products/Release-iphoneos/RelayOne.app"
+          test -d "$APP"
+          codesign --force --timestamp=none --sign - "$APP"
+          rm -rf RelayOne/Payload RelayOne/RelayOne.ipa
+          mkdir -p RelayOne/Payload
+          cp -R "$APP" RelayOne/Payload/
+          (cd RelayOne && zip -qry RelayOne.ipa Payload)
+          rm -rf RelayOne/Payload
+
+      - name: Upload RelayOne IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: RelayOne-unsigned
+          path: RelayOne/RelayOne.ipa
+          if-no-files-found: error
+          retention-days: 14
