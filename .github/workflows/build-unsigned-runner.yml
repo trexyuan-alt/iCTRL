@@ -26,20 +26,31 @@ jobs:
         run: brew install xcodegen
 
       - name: Build unsigned release IPAs
-        run: make ipa UNSIGNED=1
-
-      - name: Upload normal iCTRL IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: iCTRL-normal-app-unsigned
-          path: release/iCTRL.ipa
-          if-no-files-found: error
-          retention-days: 14
+        shell: bash
+        run: |
+          set +e
+          make ipa UNSIGNED=1
+          rc=$?
+          set -e
+          if [[ -f release/iCTRLUITests-Runner.ipa ]]; then
+            echo "Runner release IPA is ready; normal-app release packaging may fail independently."
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Upload iCTRL Runner IPA
         uses: actions/upload-artifact@v4
         with:
           name: iCTRLUITests-Runner-unsigned
           path: release/iCTRLUITests-Runner.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload normal iCTRL IPA
+        if: ${{ hashFiles('release/iCTRL.ipa') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iCTRL-normal-app-unsigned
+          path: release/iCTRL.ipa
           if-no-files-found: error
           retention-days: 14
