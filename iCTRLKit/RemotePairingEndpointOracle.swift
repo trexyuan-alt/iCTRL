@@ -96,18 +96,24 @@ private func remotePairingResolveCallback(
         return
     }
 
+    var fields: [String: String] = [:]
+    if let txtRecord, txtLen > 0 {
+        fields = parseRemotePairingTXT(Data(bytes: txtRecord, count: Int(txtLen)))
+    }
+    guard let identifier = fields["identifier"], !identifier.isEmpty,
+          let authTag = fields["authTag"], !authTag.isEmpty else {
+        state.finish(error: .serverError("RemotePairing endpoint metadata is incomplete"))
+        return
+    }
+
     var output: [String: JSONValue] = [
         "port": .int(Int(UInt16(bigEndian: port))),
+        "identifier": .string(identifier),
+        "authTag": .string(authTag),
         "service_type": .string("_remotepairing._tcp.local."),
     ]
-    if let txtRecord, txtLen > 0 {
-        let txt = Data(bytes: txtRecord, count: Int(txtLen))
-        let fields = parseRemotePairingTXT(txt)
-        for key in ["identifier", "authTag", "wireProtocolVersion"] {
-            if let value = fields[key] {
-                output[key] = .string(value)
-            }
-        }
+    if let wire = fields["wireProtocolVersion"], !wire.isEmpty {
+        output["wireProtocolVersion"] = .string(wire)
     }
     state.finish(result: output)
 }
