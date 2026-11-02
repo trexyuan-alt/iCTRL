@@ -162,8 +162,9 @@ ipa: build
 	@# app declares the type. Only the nearby listener depends on it.
 	@PLIST="$(BUILD_DIR)/$(RUNNER_APP)/Info.plist"; \
 	/usr/libexec/PlistBuddy -c "Delete :NSBonjourServices" "$$PLIST" 2>/dev/null || true; \
-	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$$PLIST"; \
-	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _ictrl._tcp" "$$PLIST"
+	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST"; \
+	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _ictrl._tcp" "$PLIST"; \
+	/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:1 string _remotepairing._tcp" "$PLIST"
 	@echo "🏷  Aligning .xctest bundle id with the Runner..."
 	@# Rewrite the embedded .xctest CFBundleIdentifier to match the Runner app id,
 	@# so the plugin and its host share one identifier. Done BEFORE the re-sign so
