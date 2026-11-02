@@ -16,10 +16,10 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - Sources
-    info:
-      path: Info.plist
     settings:
       base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.temporary.relayone
         PRODUCT_NAME: RelayOne
         TARGETED_DEVICE_FAMILY: "1,2"
