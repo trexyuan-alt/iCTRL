@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct iCTRLApp: App {
+    @UIApplicationDelegateAdaptor(iCTRLAppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
     @StateObject private var permission = NetworkPermission()
     /// Clients and log of the runner on this device; shared by Settings and Logs.

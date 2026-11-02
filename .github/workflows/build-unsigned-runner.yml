@@ -28,6 +28,14 @@ jobs:
       - name: Build unsigned release IPAs
         run: make ipa UNSIGNED=1
 
+      - name: Upload normal iCTRL IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iCTRL-normal-app-unsigned
+          path: release/iCTRL.ipa
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload iCTRL Runner IPA
         uses: actions/upload-artifact@v4
         with:

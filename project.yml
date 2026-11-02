@@ -52,6 +52,7 @@ targets:
         # iOS denies UIApplication.open() for these schemes with no error, which
         # would break the Start button and the StikDebug shortcut.
         INFOPLIST_FILE: iCTRLApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: iCTRLApp/iCTRL.entitlements
 
   iCTRLUITests:
     type: bundle.ui-testing

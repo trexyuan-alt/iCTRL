@@ -62,6 +62,11 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ictrl._tcp</string>
+		<string>_remotepairing._tcp</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
 	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
