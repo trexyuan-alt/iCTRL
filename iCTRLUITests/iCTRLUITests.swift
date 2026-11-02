@@ -1035,6 +1035,7 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
         "config", "reset", "is_locked", "logs", "recent_logs",
         "resolve_app", "search_app", "search_apps",
         "list_apps", "installed_apps",
+        "remotepairing_endpoint",
         // Class-metadata introspection only — takes no snapshot, touches no
         // element. Belongs here precisely because you want to run it WHILE the
         // UI channel is wedged, to find out what the snapshot API supports.
@@ -1285,6 +1286,12 @@ final class iCTRLUITests: XCTestCase, UNUserNotificationCenterDelegate {
                 let work = {
                     if method == "config" {
                         result = self.handleConfig(params)
+                    } else if method == "remotepairing_endpoint" {
+                        if let params, !params.isEmpty {
+                            result = (nil, .invalidParams)
+                        } else {
+                            result = RemotePairingEndpointOracle.resolve()
+                        }
                     } else if let handler = self.actionHandler {
                         let reason = ObjCException.catching {
                             result = handler.dispatch(method: method, params: params)
