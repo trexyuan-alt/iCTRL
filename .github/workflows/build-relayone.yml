@@ -31,7 +31,19 @@ jobs:
 
       - name: Build unsigned device app
         run: |
-          xcodebuild build             -project RelayOne/RelayOne.xcodeproj             -scheme RelayOne             -configuration Release             -sdk iphoneos             -destination "generic/platform=iOS"             -derivedDataPath RelayOne/build             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=             DEVELOPMENT_TEAM=             ARCHS=arm64
+          xcodebuild build \
+            -project RelayOne/RelayOne.xcodeproj \
+            -scheme RelayOne \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath RelayOne/build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            ARCHS=arm64 \
+            RELAYONE_BUILD_REVISION="${GITHUB_SHA::7}"
 
       - name: Package IPA
         run: |

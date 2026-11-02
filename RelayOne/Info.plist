@@ -15,7 +15,9 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
+    <key>RelayOneBuildRevision</key>
+    <string>$(RELAYONE_BUILD_REVISION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
