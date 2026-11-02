@@ -6,6 +6,9 @@ on:
       - iphone-endpoint-oracle-20261102
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-runner:
     runs-on: macos-15
