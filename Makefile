@@ -124,18 +124,22 @@ ipa: build
 	@# half-patched runner (shim loaded, symbol not retargeted) would otherwise
 	@# be mistaken for a finished one by the check below and shipped.
 	@set -e; \
-	APP="$(BUILD_DIR)/$(RUNNER_APP)"; \
-	if otool -L "$$APP/$(RUNNER_BIN)" | grep -q libXCTCompatShim; then \
+	APP="$(BUILD_DIR)/$(RUNNER_APP)"; BIN="$APP/$(RUNNER_BIN)"; \
+	if otool -L "$BIN" | grep -q libXCTCompatShim; then \
 		echo "   ✅ shim already present — skipping"; \
 		exit 0; \
 	fi; \
-	SDK="$$(xcrun --sdk iphoneos --show-sdk-path)"; \
+	if ! xcrun nm -u "$BIN" 2>/dev/null | grep -Fq '_OBJC_CLASS_$_XCTCommandLineToolHelper'; then \
+		echo "   ✅ legacy XCTCommandLineToolHelper reference absent — shim not required"; \
+		exit 0; \
+	fi; \
+	SDK="$(xcrun --sdk iphoneos --show-sdk-path)"; \
 	mkdir -p "$$APP/Frameworks"; \
 	xcrun -sdk iphoneos clang -dynamiclib -arch arm64 -isysroot "$$SDK" \
 		-mios-version-min=16.0 -install_name "@rpath/libXCTCompatShim.dylib" \
 		-framework Foundation -o "$$APP/Frameworks/libXCTCompatShim.dylib" \
 		iCTRLCompat/XCTCompatShim.m; \
-	BIN="$$APP/$(RUNNER_BIN)"; TMP="$$BIN.patching"; \
+	TMP="$BIN.patching"; \
 	cp "$$BIN" "$$TMP"; \
 	trap 'rm -f "$$TMP"' EXIT; \
 	python3 Scripts/insert-dylib.py "$$TMP" "@rpath/libXCTCompatShim.dylib"; \
