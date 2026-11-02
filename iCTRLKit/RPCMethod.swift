@@ -31,6 +31,12 @@ struct RPCMethodRegistry {
             returns: "{allow_remote_access, listen_port, address, restarted, device_name, lan_addresses, ipv4_interfaces, nearby:{enabled, advertising, status, interface, name, device_id, port}, active_sessions, sessions:[{session_id, client_name, tok, granted_at, last_active_at, expires_at, last_address, last_via: local (this device or USB) | lan | nearby (AWDL) | vpn | cellular | other}], cleared_sessions}"
         ),
         RPCMethodDef(
+            name: "remotepairing_endpoint",
+            description: "Read-only endpoint oracle for this device's current RemotePairing TCP listener. Browses _remotepairing._tcp.local. on the phone, resolves exactly one visible service, and returns its SRV port plus identifier/authTag/wireProtocolVersion TXT fields when present. Performs no Pair Verify, tunnel, screenshot, HID, or other control action. Fails closed if no service or multiple distinct services are visible.",
+            params: [],
+            returns: "{port, service_type, identifier?, authTag?, wireProtocolVersion?}"
+        ),
+        RPCMethodDef(
             name: "stream_ticket",
             description: "Mint a single-use, ~60s ticket authorizing ONE plain GET to /stream or /logs*. Those are raw byte responses a browser/player fetches directly, so they can't carry a per-request encrypted envelope; this hands out a short-lived credential instead. Call it over the encrypted channel (like every RPC), then append ?ticket=<ticket> to the URL. The ticket is consumed on first use — mint a new one per stream/log fetch.",
             params: [],
@@ -377,7 +383,7 @@ struct RPCMethodRegistry {
     /// release that added the encrypted auth channel plus the docs/Skill,
     /// clear-text, page-source, and reliability improvements. Single source of
     /// truth for /schema AND device_info.
-    static let serverVersion = "1.98.16"
+    static let serverVersion = "1.98.17"
 
     /// When this binary was built, as "YYYY-MM-DD HH:MM".
     ///
@@ -420,6 +426,7 @@ struct RPCMethodRegistry {
         "screen_text",         // Vision OCR fallback when the AX tree has no on-screen rows
         "cli_binary",          // GET /skill/clients/cli — static aarch64-musl client
         "nearby_discovery",    // Bonjour over peer-to-peer Wi-Fi (AWDL) on port+1, when turned on
+        "remotepairing_endpoint", // authenticated read-only _remotepairing._tcp endpoint oracle
         "drag_path",           // drag{points:[{x,y},...]} — one finger through waypoints, no lift at corners
     ]
 
