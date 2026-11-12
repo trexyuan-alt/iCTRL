@@ -297,6 +297,11 @@ struct SettingsView: View {
                 } label: {
                     Text(L10n.t(.runnerLogs))
                 }
+
+                BackgroundControlSessionRow(session: appState.backgroundControl) {
+                    appState.startBackgroundControlSession()
+                }
+
                 Button(role: .destructive) {
                     stopRunner()
                 } label: {
@@ -339,6 +344,63 @@ struct SettingsView: View {
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()
+        }
+    }
+}
+
+
+/// User-visible start/status surface for the bounded ZERO-XCTEST background
+/// control session. Starting this task is intentionally an explicit Owner action.
+private struct BackgroundControlSessionRow: View {
+    @ObservedObject var session: BackgroundControlSession
+    let start: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch session.state {
+            case .unsupported:
+                Label("背景控制需要 iOS 26 或更新版本", systemImage: "exclamationmark.triangle")
+                    .foregroundColor(.secondary)
+
+            case .submitted:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("背景控制：啟動中")
+                }
+
+            case .running:
+                HStack(spacing: 8) {
+                    Circle().fill(.green).frame(width: 8, height: 8)
+                    Text("背景控制：運行中（30 分鐘）")
+                }
+
+            case .idle:
+                startButton
+
+            case .completed:
+                Text("上一個背景控制工作已完成")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                startButton
+
+            case .expired:
+                Text("上一個背景控制工作已到期或被系統停止")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                startButton
+
+            case .failed(let message):
+                Text("背景控制啟動失敗：\(message)")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                startButton
+            }
+        }
+    }
+
+    private var startButton: some View {
+        Button(action: start) {
+            Label("啟動 30 分鐘背景控制", systemImage: "clock.arrow.circlepath")
         }
     }
 }
