@@ -1,5 +1,6 @@
 import SwiftUI
 import Network
+import UIKit
 
 /// Foreground control-plane service for the production ZERO-XCTEST Companion.
 ///
@@ -74,6 +75,39 @@ class AppState: ObservableObject {
                 DispatchQueue.global(qos: .userInitiated).async {
                     let result = RemotePairingEndpointOracle.resolve()
                     completion(result.0, result.1)
+                }
+
+            case "device_info":
+                guard params == nil || params?.isEmpty == true else {
+                    completion(nil, .invalidParams)
+                    return
+                }
+                // Preserve the backend health contract without touching XCTest.
+                // A normal app reports the real UIScreen geometry directly; unlike
+                // the old compatibility-mode Runner it does not need XCUIApplication.
+                DispatchQueue.main.async {
+                    let bounds = UIScreen.main.bounds
+                    let native = UIScreen.main.nativeBounds
+                    completion([
+                        "name": .string(UIDevice.current.name),
+                        "model": .string(UIDevice.current.model),
+                        "system_name": .string(UIDevice.current.systemName),
+                        "system_version": .string(UIDevice.current.systemVersion),
+                        "point_width": .double(Double(bounds.width)),
+                        "point_height": .double(Double(bounds.height)),
+                        "pixel_width": .double(Double(native.width)),
+                        "pixel_height": .double(Double(native.height)),
+                        "scale": .double(Double(UIScreen.main.nativeScale)),
+                        "server_version": .string(RPCMethodRegistry.serverVersion),
+                        "protocol_version": .int(RPCMethodRegistry.protocolVersion),
+                        "mode": .string("zero_xctest_companion"),
+                        "capabilities": .array([
+                            .string("envelope_v1"),
+                            .string("zero_xctest_companion"),
+                            .string("get_current_remotepairing_endpoint"),
+                            .string("local_oob_stop"),
+                        ]),
+                    ], nil)
                 }
 
             default:
