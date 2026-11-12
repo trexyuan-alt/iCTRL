@@ -128,7 +128,35 @@ enum RemotePairingEndpointOracle {
     private static let serviceType = "_remotepairing._tcp"
     private static let domain = "local."
 
+    // Runner authority heartbeats arrive much faster than a Bonjour browse can
+    // complete. Serialize cache misses and reuse a freshly authenticated endpoint
+    // for a short bounded window. Liveness still comes from the Companion :8200
+    // RPC itself on every heartbeat; stopping/killing the Companion therefore
+    // still revokes authority immediately.
+    private static let resolveLock = NSLock()
+    private static let cacheLock = NSLock()
+    private static var cachedResult: [String: JSONValue]?
+    private static var cacheExpiresAt = Date.distantPast
+    private static let cacheTTL: TimeInterval = 5.0
+
     static func resolve() -> ([String: JSONValue]?, JSONRPCError?) {
+        cacheLock.lock()
+        if let cached = cachedResult, Date() < cacheExpiresAt {
+            cacheLock.unlock()
+            return (cached, nil)
+        }
+        cacheLock.unlock()
+
+        resolveLock.lock()
+        defer { resolveLock.unlock() }
+
+        // Another request may have populated the cache while this caller waited.
+        cacheLock.lock()
+        if let cached = cachedResult, Date() < cacheExpiresAt {
+            cacheLock.unlock()
+            return (cached, nil)
+        }
+        cacheLock.unlock()
         let queue = DispatchQueue(label: "com.openminis.ictrl.remotepairing-oracle")
         let browse = RemotePairingBrowseState()
         var browseRef: DNSServiceRef?
@@ -150,7 +178,12 @@ enum RemotePairingEndpointOracle {
         // Collect a bounded snapshot. No retry and no network connection to the
         // advertised service is made here.
         Thread.sleep(forTimeInterval: 1.5)
-        DNSServiceRefDeallocate(browseRef)
+        // Deallocate on the callback queue and drain it before the local callback
+        // context can leave scope. This prevents a pending dnssd callback from
+        // racing teardown and dereferencing released Swift state.
+        queue.sync {
+            DNSServiceRefDeallocate(browseRef)
+        }
 
         browse.lock.lock()
         let services = Array(browse.services.values)
@@ -180,7 +213,9 @@ enum RemotePairingEndpointOracle {
         }
 
         let wait = resolved.done.wait(timeout: .now() + 2.0)
-        DNSServiceRefDeallocate(resolveRef)
+        queue.sync {
+            DNSServiceRefDeallocate(resolveRef)
+        }
         guard wait == .success else {
             return (nil, .serverError("RemotePairing Bonjour resolve timed out"))
         }
@@ -189,6 +224,13 @@ enum RemotePairingEndpointOracle {
         let result = resolved.result
         let error = resolved.error
         resolved.lock.unlock()
+
+        if let result, error == nil {
+            cacheLock.lock()
+            cachedResult = result
+            cacheExpiresAt = Date().addingTimeInterval(cacheTTL)
+            cacheLock.unlock()
+        }
         return (result, error)
     }
 }
