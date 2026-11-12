@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - iphone-endpoint-oracle-20261102
+      - zero-xctest-companion-20261112
   workflow_dispatch:
 
 permissions:
@@ -37,6 +38,9 @@ jobs:
             exit 0
           fi
           exit "$rc"
+
+      - name: Require ZERO-XCTEST Companion IPA
+        run: test -f release/iCTRL.ipa
 
       - name: Upload iCTRL Runner IPA
         uses: actions/upload-artifact@v4
