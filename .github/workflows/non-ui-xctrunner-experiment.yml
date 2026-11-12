@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodegen generate --spec project.nonui.yml --project iCTRLNonUIExperiment.xcodeproj
+          xcodegen generate --spec project.nonui.yml
 
       - name: Build non-UI XCTRunner
         shell: bash
