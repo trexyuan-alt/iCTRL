@@ -31,6 +31,12 @@ struct RPCMethodRegistry {
             returns: "{allow_remote_access, listen_port, address, restarted, device_name, lan_addresses, ipv4_interfaces, nearby:{enabled, advertising, status, interface, name, device_id, port}, active_sessions, sessions:[{session_id, client_name, tok, granted_at, last_active_at, expires_at, last_address, last_via: local (this device or USB) | lan | nearby (AWDL) | vpn | cellular | other}], cleared_sessions}"
         ),
         RPCMethodDef(
+            name: "get_current_remotepairing_endpoint",
+            description: "CURRENT production backend contract: read-only endpoint oracle for this device's RemotePairing TCP listener. Returns the SRV port plus identifier/authTag/wireProtocolVersion metadata. No Pair Verify, tunnel, screenshot, HID, XCTest, or other control action.",
+            params: [],
+            returns: "{port, service_type, identifier, authTag, wireProtocolVersion?}"
+        ),
+        RPCMethodDef(
             name: "remotepairing_endpoint",
             description: "Read-only endpoint oracle for this device's current RemotePairing TCP listener. Browses _remotepairing._tcp.local. on the phone, resolves exactly one visible service, and returns its SRV port plus identifier/authTag/wireProtocolVersion TXT fields when present. Performs no Pair Verify, tunnel, screenshot, HID, or other control action. Fails closed if no service or multiple distinct services are visible.",
             params: [],
