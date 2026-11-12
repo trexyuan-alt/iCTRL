@@ -1,0 +1,149 @@
+name: Non-UI XCTRunner lifecycle experiment
+
+on:
+  push:
+    branches:
+      - non-ui-xctrunner-lifecycle-experiment
+    paths:
+      - 'project.nonui.yml'
+      - 'iCTRLNonUITests/**'
+      - '.github/workflows/non-ui-xctrunner-experiment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: non-ui-xctrunner-lifecycle-experiment
+
+      - name: Select Xcode and install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version
+
+      - name: Generate isolated project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.nonui.yml --project iCTRLNonUIExperiment.xcodeproj
+
+      - name: Build non-UI XCTRunner
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build-nonui
+          xcodebuild build-for-testing \
+            -project iCTRLNonUIExperiment.xcodeproj \
+            -scheme iCTRLNonUI \
+            -derivedDataPath build-nonui \
+            -destination 'generic/platform=iOS' \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM=''
+
+      - name: Locate and inspect Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=build-nonui/Build/Products/Debug-iphoneos
+          APP="$(find "$OUT" -maxdepth 3 -type d -name '*Runner.app' | head -1)"
+          test -n "$APP"
+          XCTEST="$(find "$APP/PlugIns" -maxdepth 1 -type d -name '*.xctest' | head -1)"
+          test -n "$XCTEST"
+          TESTBIN="$(find "$XCTEST" -maxdepth 1 -type f -perm +111 | head -1)"
+          test -n "$TESTBIN"
+
+          mkdir -p evidence
+          {
+            echo "RUNNER_APP=$APP"
+            echo "XCTEST=$XCTEST"
+            echo "TESTBIN=$TESTBIN"
+            echo -n "RUNNER_BUNDLE_ID="
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+            echo -n "XCTEST_BUNDLE_ID="
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$XCTEST/Info.plist"
+            if /usr/libexec/PlistBuddy -c 'Print :XCTContainsUITests' "$XCTEST/Info.plist" >/tmp/xctcontains 2>/dev/null; then
+              echo "XCTCONTAINSUITESTS=$(cat /tmp/xctcontains)"
+            else
+              echo "XCTCONTAINSUITESTS=ABSENT"
+            fi
+            if /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP/Info.plist" >/tmp/bg 2>/dev/null; then
+              echo "UIBACKGROUNDMODES_PRESENT=YES"
+              cat /tmp/bg
+            else
+              echo "UIBACKGROUNDMODES_PRESENT=NO"
+            fi
+            echo "FORBIDDEN_UI_AUTOMATION_STRINGS:"
+            (strings "$TESTBIN"; strings "$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")") \
+              | grep -E 'XCUIApplication|XCUIElement|XCUIDevice|XCTAutomationSupport|enableAutomationMode|XCTContainsUITests' || true
+          } | tee evidence/static-evidence.txt
+
+          ! grep -q '^XCTCONTAINSUITESTS=True$' evidence/static-evidence.txt
+          ! grep -q 'XCUIApplication' evidence/static-evidence.txt
+          ! grep -q 'XCUIElement' evidence/static-evidence.txt
+          ! grep -q 'XCUIDevice' evidence/static-evidence.txt
+          ! grep -q 'enableAutomationMode' evidence/static-evidence.txt
+
+          cp -R "$APP" evidence/Runner-pristine.app
+
+      - name: Package no-continuous variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -R evidence/Runner-pristine.app /tmp/Runner-no-continuous.app
+          APP=/tmp/Runner-no-continuous.app
+          PB=/usr/libexec/PlistBuddy
+          "$PB" -c 'Delete :UIBackgroundModes' "$APP/Info.plist" 2>/dev/null || true
+          if "$PB" -c 'Print :UIBackgroundModes' "$APP/Info.plist" >/dev/null 2>&1; then exit 1; fi
+          find "$APP" -name 'embedded.mobileprovision' -delete
+          find "$APP/PlugIns" -maxdepth 1 -type d -name '*.xctest' -exec codesign --force --timestamp=none --sign - {} \;
+          codesign --force --timestamp=none --sign - "$APP"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP" "$STAGE/Payload/"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/ictrl-nonui-xctrunner-no-continuous.ipa" Payload)
+          rm -rf "$STAGE"
+
+      - name: Package continuous variant from same binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -R evidence/Runner-pristine.app /tmp/Runner-continuous.app
+          APP=/tmp/Runner-continuous.app
+          PB=/usr/libexec/PlistBuddy
+          "$PB" -c 'Delete :UIBackgroundModes' "$APP/Info.plist" 2>/dev/null || true
+          "$PB" -c 'Add :UIBackgroundModes array' "$APP/Info.plist"
+          "$PB" -c 'Add :UIBackgroundModes:0 string continuous' "$APP/Info.plist"
+          "$PB" -c 'Print :UIBackgroundModes' "$APP/Info.plist" | tee evidence/continuous-plist.txt
+          find "$APP" -name 'embedded.mobileprovision' -delete
+          find "$APP/PlugIns" -maxdepth 1 -type d -name '*.xctest' -exec codesign --force --timestamp=none --sign - {} \;
+          codesign --force --timestamp=none --sign - "$APP"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP" "$STAGE/Payload/"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/ictrl-nonui-xctrunner-continuous.ipa" Payload)
+          rm -rf "$STAGE"
+
+      - name: Upload isolated experiment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: non-ui-xctrunner-lifecycle-${{ github.run_id }}
+          path: |
+            ictrl-nonui-xctrunner-no-continuous.ipa
+            ictrl-nonui-xctrunner-continuous.ipa
+            evidence/static-evidence.txt
+            evidence/continuous-plist.txt
+          if-no-files-found: error
+          retention-days: 7
