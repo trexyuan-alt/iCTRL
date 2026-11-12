@@ -26,6 +26,48 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: ZERO-XCTEST production source guard
+        shell: bash
+        run: |
+          ! grep -R -n -E '^import XCTest
+          set +e
+          make ipa UNSIGNED=1
+          rc=$?
+          set -e
+          if [[ -f release/iCTRLUITests-Runner.ipa ]]; then
+            echo "Runner release IPA is ready; normal-app release packaging may fail independently."
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Require ZERO-XCTEST Companion IPA
+        run: test -f release/iCTRL.ipa
+
+      - name: Upload iCTRL Runner IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iCTRLUITests-Runner-unsigned
+          path: release/iCTRLUITests-Runner.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload normal iCTRL IPA
+        if: ${{ hashFiles('release/iCTRL.ipa') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iCTRL-normal-app-unsigned
+          path: release/iCTRL.ipa
+          if-no-files-found: error
+          retention-days: 14
+ iCTRLApp iCTRLKit
+          ! grep -F 'ictrl://start' iCTRLApp/Views/SettingsView.swift
+          ! grep -F 'iCTRLUITests-Runner' iCTRLApp/Views/SettingsView.swift
+          grep -F '"get_current_remotepairing_endpoint"' iCTRLApp/Models/AppState.swift
+          grep -F '"device_info"' iCTRLApp/Models/AppState.swift
+          grep -F 'appState.startServer()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.stopServer()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'server?.stop()' iCTRLApp/Models/AppState.swift
+
       - name: Build unsigned release IPAs
         shell: bash
         run: |
