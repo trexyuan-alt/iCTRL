@@ -45,7 +45,7 @@ strip_one() {
     for plugin in "$app"/PlugIns/*; do
         [[ -d "$plugin" ]] && "${sign[@]}" "$plugin" 2>/dev/null
     done
-    if [[ "$(basename "$app")" == "iCTRL.app" ]]; then
+    if [[ "$(basename "$app")" == "iCTRL.app" && -f "$REPO/iCTRLApp/iCTRL.entitlements" ]]; then
         "${sign[@]}" --entitlements "$REPO/iCTRLApp/iCTRL.entitlements" "$app" 2>/dev/null
     else
         "${sign[@]}" "$app" 2>/dev/null
