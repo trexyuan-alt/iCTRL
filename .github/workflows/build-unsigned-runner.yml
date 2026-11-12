@@ -62,7 +62,7 @@ jobs:
           xcodebuild build \
             -project iCTRL.xcodeproj \
             -scheme iCTRL \
-            -configuration Debug \
+            -configuration Release \
             -derivedDataPath build/background-authority \
             -destination "generic/platform=iOS" \
             CODE_SIGNING_ALLOWED=NO \
@@ -75,14 +75,14 @@ jobs:
       - name: Require ZERO-XCTEST Companion app
         shell: bash
         run: |
-          test -d build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app
-          test ! -d build/background-authority/Build/Products/Debug-iphoneos/iCTRLUITests-Runner.app
+          test -d build/background-authority/Build/Products/Release-iphoneos/iCTRL.app
+          test ! -d build/background-authority/Build/Products/Release-iphoneos/iCTRLUITests-Runner.app
 
       - name: Package normal Companion IPA
         shell: bash
         run: |
           set -euo pipefail
-          APP=build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app
+          APP=build/background-authority/Build/Products/Release-iphoneos/iCTRL.app
           rm -rf release/Payload
           mkdir -p release/Payload
           cp -R "$APP" release/Payload/
@@ -95,10 +95,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PLIST=build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app/Info.plist
+          PLIST=build/background-authority/Build/Products/Release-iphoneos/iCTRL.app/Info.plist
           /usr/libexec/PlistBuddy -c 'Print :BGTaskSchedulerPermittedIdentifiers' "$PLIST" | grep -F 'remote-control-session'
-          strings build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app/iCTRL | grep -F 'iCTRL Remote Control'
-          if find build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app -iname '*XCTest*' -print -quit | grep -q .; then
+          strings build/background-authority/Build/Products/Release-iphoneos/iCTRL.app/iCTRL | grep -F 'iCTRL Remote Control'
+          if find build/background-authority/Build/Products/Release-iphoneos/iCTRL.app -iname '*XCTest*' -print -quit | grep -q .; then
             echo "XCTest content found in normal Companion app"
             exit 1
           fi
