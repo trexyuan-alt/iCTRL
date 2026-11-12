@@ -3,10 +3,9 @@ import UIKit
 
 /// The app's home screen.
 ///
-/// Note what this app is NOT: automation runs in the XCUITest runner, a separate
-/// process. This app can't serve RPC itself, so it doesn't try — it reports
-/// whether the runner is able to launch (the DDI check) and offers a button that
-/// launches it via `ictrl://start`.
+/// Production control uses the ZERO-XCTEST Companion hosted by this normal app.
+/// The Companion serves only authenticated bootstrap/authority RPC. UI reads and
+/// actions remain on CoreDevice / RemotePairing / RSD / remoteAX / UniversalHID.
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
 
@@ -14,25 +13,11 @@ struct SettingsView: View {
     /// can be unmounted while the app sits in the background, so a value cached
     /// at launch goes stale silently.
     @State private var ddi = DeveloperDiskImage.status()
-    @State private var launchFailed = false
     @State private var showMountSheet = false
     @StateObject private var runner = RunnerStatus(port: 8200)
     @EnvironmentObject private var runnerAdmin: RunnerAdmin
     @State private var logCount = AppLog.allFiles().count
 
-
-    /// The runner registers this scheme; opening it starts the automation server.
-    ///
-    /// `callback` asks the runner to bounce back to us once it has decided
-    /// whether the server came up, appending `status` and `address`. Without it
-    /// the user is left in the runner — a blank XCTest app with nothing to show
-    /// — wondering whether anything happened.
-    private static let runnerURL = URL(string: "ictrl://start?callback=ictrl-app://started")!
-
-    /// Fallback for stopping when this app is not paired with the runner: the
-    /// runner then asks for confirmation on the device (any app can open this
-    /// URL). Paired, the app stops it with `config{stop_server:true}` instead.
-    private static let runnerStopURL = URL(string: "ictrl://stop?callback=ictrl-app://stopped")!
 
     /// Provides the local loopback tunnel StikDebug needs to reach lockdownd.
     /// Deliberately an App Store link and not a deep link: neither LocalDevVPN
@@ -77,18 +62,6 @@ struct SettingsView: View {
                     Text(L10n.t(.alternativeSection))
                 } footer: {
                     Text(L10n.t(.alternativeFooter))
-                }
-            }
-
-            if launchFailed {
-                Section {
-                    Label {
-                        Text("Couldn't open the runner. Install iCTRLUITests-Runner with SideStore (or your own signing), then try again.")
-                            .font(.footnote)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                    }
                 }
             }
 
@@ -137,17 +110,6 @@ struct SettingsView: View {
             runner.startPolling()
         }
         .onDisappear { runner.stopPolling() }
-        .onOpenURL { url in
-            // The runner bounced back: ictrl-app://started?status=…&address=…
-            guard url.scheme == "ictrl-app" else { return }
-            // ictrl-app://started or ictrl-app://stopped
-            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            let status = items.first { $0.name == "status" }?.value
-            launchFailed = (status == "failed")
-            // Trust the probe over the reported status — by the time we're back,
-            // asking the server directly is both cheap and authoritative.
-            Task { await runner.check() }
-        }
         .sheet(isPresented: $showMountSheet, onDismiss: {
             // Re-probe: a successful mount changes what the status row should say.
             ddi = DeveloperDiskImage.status()
@@ -156,14 +118,11 @@ struct SettingsView: View {
         }
     }
 
-    /// What must be true before automation can run at all.
+    /// What must be true before the CoreDevice control chain can be prepared.
     ///
-    /// The Developer Disk Image is the one hard prerequisite: without it the
-    /// XCUITest runner dies in dyld before any of our code runs, so a missing
-    /// DDI is not a degraded mode — it is the whole feature not working. This
-    /// section states that, and offers the fix either way: mount it when it's
-    /// absent, re-mount when it's there but the user has reason to redo it
-    /// (a reboot drops it, and the status here can only report what it can see).
+    /// The Developer Disk Image remains the hard prerequisite for the
+    /// RemotePairing/CoreDevice path. The Companion itself is a normal app and
+    /// does not start XCTest or testmanagerd UI automation.
     private var requirementsSection: some View {
         Section {
             HStack {
@@ -204,8 +163,7 @@ struct SettingsView: View {
             if ddi.isMounted {
                 Text(L10n.t(.ddiReadyFooter))
             } else {
-                Text(ddi.advice ?? "The Developer Disk Image isn't mounted, so the automation "
-                                 + "runner can't launch.")
+                Text(ddi.advice ?? "The Developer Disk Image isn't mounted, so the CoreDevice control chain can't be prepared.")
             }
         }
     }
@@ -227,12 +185,10 @@ struct SettingsView: View {
         }
     }
 
-    /// Live state of the automation server.
+    /// Live state of the ZERO-XCTEST Companion service.
     ///
-    /// The server runs inside the XCUITest runner, a separate process, so this
-    /// reports what an HTTP probe of it says rather than anything this app
-    /// knows locally — the runner can be started or killed without the app
-    /// being involved at all.
+    /// The HTTP probe remains authoritative so it verifies the exact :8200
+    /// surface the backend will use, rather than trusting only local UI state.
     private var serverSection: some View {
         Section {
             HStack {
@@ -371,38 +327,18 @@ struct SettingsView: View {
     }
 
     private func stopRunner() {
-        // Paired with the runner: stop it over the encrypted channel.
-        // Otherwise open its scheme, which (any app being able to open it)
-        // only posts a confirmation on the device; the probe then settles the
-        // displayed state.
-        Task {
-            if await runnerAdmin.stopRunner() {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                await runner.check()
-                return
-            }
-            await MainActor.run { openRunnerStopURL() }
-        }
-    }
-
-    private func openRunnerStopURL() {
-        UIApplication.shared.open(Self.runnerStopURL) { _ in
-            Task {
-                // Give the runner a moment to actually tear the listener down;
-                // probing instantly would still see it up and flip back to
-                // "Running" for one cycle.
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                await runner.check()
-            }
-        }
+        // LOCAL/OOB emergency stop: this is an in-process call, not an RPC.
+        // It therefore stays independent of the mounted ChatGPT/MCP transport.
+        appState.stopServer()
+        Task { await runner.check() }
     }
 
     private func startRunner() {
-        launchFailed = false
-        UIApplication.shared.open(Self.runnerURL) { ok in
-            // The usual cause is the runner simply not being installed — the two
-            // IPAs ship separately, so having this app is no guarantee.
-            launchFailed = !ok
+        // Production start: bind :8200 in this normal app. No XCTest/testmanagerd.
+        appState.startServer()
+        Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await runner.check()
         }
     }
 }
