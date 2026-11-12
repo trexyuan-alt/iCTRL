@@ -1,3 +1,4 @@
+# Isolated lifecycle experiment only. No production target references this spec.
 name: iCTRLNonUIExperiment
 options:
   bundleIdPrefix: com.openminis
