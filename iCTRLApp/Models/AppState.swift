@@ -1,6 +1,13 @@
 import SwiftUI
 import Network
 
+/// Foreground control-plane service for the production ZERO-XCTEST Companion.
+///
+/// The Companion deliberately does NOT expose UI automation. Phone UI reads and
+/// mutations stay on the external CoreDevice / RemotePairing / RSD / remoteAX /
+/// UniversalHID path. This service only keeps the authenticated bootstrap surface
+/// that the backend still needs: /whoami, /pair and the current RemotePairing
+/// endpoint oracle.
 class AppState: ObservableObject {
     @Published var isServerRunning = false
     @Published var sessions: [AuthSession] = []
@@ -10,7 +17,7 @@ class AppState: ObservableObject {
 
     @AppStorage("autoStartServer") var autoStartServer = false
     @AppStorage("serverPort") var serverPort = 8200
-    @AppStorage("allowRemoteAccess") var allowRemoteAccess = false
+    @AppStorage("allowRemoteAccess") var allowRemoteAccess = true
 
     private var server: JSONRPCServer?
 
@@ -31,10 +38,17 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Turn Companion authority ON.
+    ///
+    /// Production must be remotely reachable because the Render Gateway reaches
+    /// :8200 through Tailscale. Authentication is still mandatory for /rpc.
     func startServer() {
         guard !isServerRunning else { return }
 
-        let s = JSONRPCServer(port: UInt16(serverPort), localOnly: !allowRemoteAccess)
+        allowRemoteAccess = true
+        autoStartServer = true
+
+        let s = JSONRPCServer(port: UInt16(serverPort), localOnly: false)
         server = s
 
         s.onStateChange = { [weak self] running in
@@ -42,26 +56,52 @@ class AppState: ObservableObject {
                 self?.isServerRunning = running
                 if running {
                     self?.serverError = nil
+                    self?.refreshSessions()
                     self?.updateServerAddress()
                 }
             }
         }
 
         s.onRPCRequest = { method, params, completion in
-            completion(nil, .serverError("RPC not available in app mode. Use the UITest runner for automation."))
+            switch method {
+            case "get_current_remotepairing_endpoint", "remotepairing_endpoint":
+                guard params == nil || params?.isEmpty == true else {
+                    completion(nil, .invalidParams)
+                    return
+                }
+                // Bonjour resolution intentionally blocks for a bounded snapshot;
+                // never run it on the app's main thread or the server listener.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = RemotePairingEndpointOracle.resolve()
+                    completion(result.0, result.1)
+                }
+
+            default:
+                completion(nil, .serverError(
+                    "RPC unavailable in ZERO-XCTEST Companion. "
+                    + "Phone UI control is provided by CoreDevice/remoteAX/UniversalHID."
+                ))
+            }
         }
 
         do {
             try s.start()
             serverError = nil
         } catch {
-            print("🔴 Failed to start server: \(error)")
+            print("🔴 Failed to start ZERO-XCTEST Companion: \(error)")
             serverError = error.localizedDescription
             isServerRunning = false
+            server = nil
         }
     }
 
+    /// Local independent emergency STOP.
+    ///
+    /// This does not traverse /rpc or the mounted ChatGPT MCP transport. Closing
+    /// :8200 removes the old warm Runner/Companion authority; CURRENT backend P0
+    /// Runner-loss handling then invalidates the old control generation.
     func stopServer() {
+        autoStartServer = false
         server?.stop()
         server = nil
         isServerRunning = false
@@ -82,7 +122,7 @@ class AppState: ObservableObject {
     }
 
     func updateServerAddress() {
-        let ip = allowRemoteAccess ? (getWiFiAddress() ?? "127.0.0.1") : "127.0.0.1"
+        let ip = getWiFiAddress() ?? "127.0.0.1"
         serverAddress = "\(ip):\(serverPort)"
     }
 
@@ -95,7 +135,6 @@ class AppState: ObservableObject {
 
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
             let interface = ptr.pointee
-            // ifa_addr may be NULL for an interface without an address.
             guard let sa = interface.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
 
             let name = String(cString: interface.ifa_name)
