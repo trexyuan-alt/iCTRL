@@ -18,7 +18,7 @@ targets:
       - path: iCTRLNonUITests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.openminis.ictrl.nonui.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.openminis.ictrl.uitests
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
         USES_XCTRUNNER: YES
