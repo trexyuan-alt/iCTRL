@@ -59,6 +59,10 @@
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).remote-control-session</string>
+	</array>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ictrl._tcp</string>
