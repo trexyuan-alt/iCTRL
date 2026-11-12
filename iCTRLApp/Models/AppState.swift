@@ -20,6 +20,10 @@ class AppState: ObservableObject {
     @AppStorage("serverPort") var serverPort = 8200
     @AppStorage("allowRemoteAccess") var allowRemoteAccess = true
 
+    /// User-visible bounded background runtime. This is separate from phone
+    /// control authority; P0 still decides whether mutations are allowed.
+    let backgroundControl = BackgroundControlSession()
+
     private var server: JSONRPCServer?
 
     struct PendingAuth: Identifiable {
@@ -31,6 +35,12 @@ class AppState: ObservableObject {
     init() {
         AuthManager.shared.delegate = self
         updateServerAddress()
+
+        backgroundControl.onForcedEnd = { [weak self] in
+            // Expiration / system cancellation / 30-minute completion must
+            // remove Companion authority immediately. No stale :8200 lease.
+            self?.stopServerTransport()
+        }
 
         if autoStartServer {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -106,6 +116,7 @@ class AppState: ObservableObject {
                             .string("zero_xctest_companion"),
                             .string("get_current_remotepairing_endpoint"),
                             .string("local_oob_stop"),
+                            .string("bg_continued_processing_v1"),
                         ]),
                     ], nil)
                 }
@@ -135,6 +146,23 @@ class AppState: ObservableObject {
     /// :8200 removes the old warm Runner/Companion authority; CURRENT backend P0
     /// Runner-loss handling then invalidates the old control generation.
     func stopServer() {
+        backgroundControl.stopOwnerInitiated()
+        stopServerTransport()
+    }
+
+    /// Explicit Owner action. The system requires continued-processing work to
+    /// begin from a foreground user action, so this is never called by
+    /// autoStartServer.
+    @discardableResult
+    func startBackgroundControlSession() -> Bool {
+        guard isServerRunning else {
+            serverError = "Start the Companion service before background control."
+            return false
+        }
+        return backgroundControl.start()
+    }
+
+    private func stopServerTransport() {
         autoStartServer = false
         server?.stop()
         server = nil
