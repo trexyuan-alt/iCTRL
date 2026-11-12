@@ -1,27 +1,28 @@
-name: Build unsigned iCTRL Runner
+name: Build ZERO-XCTEST Companion
 
 on:
   push:
     branches:
       - iphone-endpoint-oracle-20261102
       - zero-xctest-companion-20261112
+      - zero-xctest-background-authority-20261112
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-runner:
-    runs-on: macos-15-intel
+  build-companion:
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.4
+      - name: Select Xcode 26.6
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.4'
+          xcode-version: '26.6'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -29,6 +30,7 @@ jobs:
       - name: ZERO-XCTEST production source guard
         shell: bash
         run: |
+          set -euo pipefail
           if grep -R -n -E '^import XCTest$' iCTRLApp iCTRLKit; then
             echo "XCTest import found in production Companion sources"
             exit 1
@@ -43,38 +45,68 @@ jobs:
           fi
           grep -F '"get_current_remotepairing_endpoint"' iCTRLApp/Models/AppState.swift
           grep -F '"device_info"' iCTRLApp/Models/AppState.swift
-          grep -F 'appState.startServer()' iCTRLApp/Views/SettingsView.swift
-          grep -F 'appState.stopServer()' iCTRLApp/Views/SettingsView.swift
           grep -F 'server?.stop()' iCTRLApp/Models/AppState.swift
+          grep -F 'BGContinuedProcessingTaskRequest' iCTRLApp/Models/BackgroundControlSession.swift
+          grep -F 'BGContinuedProcessingTask' iCTRLApp/Models/BackgroundControlSession.swift
+          grep -F 'request.strategy = .fail' iCTRLApp/Models/BackgroundControlSession.swift
+          grep -F 'remote-control-session' iCTRLApp/Info.plist
+          grep -F 'startBackgroundControlSession()' iCTRLApp/Views/SettingsView.swift
 
-      - name: Build unsigned release IPAs
+      - name: Build normal Companion only
         shell: bash
         run: |
-          set +e
-          make ipa UNSIGNED=1
-          rc=$?
-          set -e
-          if [[ -f release/iCTRLUITests-Runner.ipa ]]; then
-            echo "Runner release IPA is ready; normal-app release packaging may fail independently."
-            exit 0
+          set -euo pipefail
+          bash Scripts/fetch-idevice.sh
+          xcodegen generate --quiet
+          ./Scripts/stamp-build.sh
+          xcodebuild build \
+            -project iCTRL.xcodeproj \
+            -scheme iCTRL \
+            -configuration Debug \
+            -derivedDataPath build/background-authority \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            ICTRL_BUNDLE_PREFIX=com.openminis \
+            ARCHS=arm64
+
+      - name: Require ZERO-XCTEST Companion app
+        shell: bash
+        run: |
+          test -d build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app
+          test ! -d build/background-authority/Build/Products/Debug-iphoneos/iCTRLUITests-Runner.app
+
+      - name: Package normal Companion IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app
+          rm -rf release/Payload
+          mkdir -p release/Payload
+          cp -R "$APP" release/Payload/
+          (cd release && zip -qr iCTRL.ipa Payload)
+          rm -rf release/Payload
+          test -f release/iCTRL.ipa
+          ls -lh release/iCTRL.ipa
+
+      - name: Verify packaged background-task metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLIST=build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :BGTaskSchedulerPermittedIdentifiers' "$PLIST" | grep -F 'remote-control-session'
+          strings build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app/iCTRL | grep -F 'iCTRL Remote Control'
+          if find build/background-authority/Build/Products/Debug-iphoneos/iCTRL.app -iname '*XCTest*' -print -quit | grep -q .; then
+            echo "XCTest content found in normal Companion app"
+            exit 1
           fi
-          exit "$rc"
 
-      - name: Require ZERO-XCTEST Companion IPA
-        run: test -f release/iCTRL.ipa
-
-      - name: Upload iCTRL Runner IPA
+      - name: Upload ZERO-XCTEST background-authority Companion IPA
         uses: actions/upload-artifact@v4
         with:
-          name: iCTRLUITests-Runner-unsigned
-          path: release/iCTRLUITests-Runner.ipa
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload ZERO-XCTEST Companion IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: iCTRL-zero-xctest-companion-unsigned
+          name: iCTRL-zero-xctest-background-authority-unsigned
           path: release/iCTRL.ipa
           if-no-files-found: error
           retention-days: 14
