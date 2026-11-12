@@ -1,11 +1,10 @@
 import Foundation
 
-/// Live status of the automation server, probed over HTTP.
+/// Live status of the :8200 Companion surface, probed over HTTP.
 ///
-/// The server runs in the XCUITest runner — a separate process this app cannot
-/// see into — so "is it running?" is answered by asking it, not by inspecting
-/// local state. `/schema` is unauthenticated and cheap, and it carries the
-/// version and capabilities, which is exactly what's worth showing.
+/// Production hosts this surface in the normal iCTRL app with no XCTest UI
+/// automation. The probe remains authoritative because it checks exactly what
+/// the backend will reach rather than trusting local state.
 @MainActor
 final class RunnerStatus: ObservableObject {
 
