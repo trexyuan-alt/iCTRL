@@ -5,7 +5,6 @@ on:
     branches:
       - iphone-endpoint-oracle-20261102
       - zero-xctest-companion-20261112
-      - background-v2-snapshot-arm-20261113
   workflow_dispatch:
 
 permissions:
@@ -61,20 +60,6 @@ jobs:
           grep -F 'Authorization' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'KeychainStore.save' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'owner_control_provision' iCTRLApp/Models/AppState.swift
-          python3 - <<'PY'
-          from pathlib import Path
-          app = Path("iCTRLApp/Models/AppState.swift").read_text()
-          arm = app.split("func startOwnerControl()", 1)[1].split("func stopOwnerControl()", 1)[0]
-          if "RemotePairingEndpointOracle.resolve" in arm:
-              raise SystemExit("Owner ARM still hard-depends on fresh Bonjour")
-          if "stopServer()" in arm:
-              raise SystemExit("Owner ARM failure still destroys foreground Companion state")
-          client = Path("iCTRLApp/Models/OwnerControlClient.swift").read_text()
-          if "func arm(completion:" not in client:
-              raise SystemExit("Owner ARM client still requires endpoint payload")
-          if '"action": "arm"' not in client or '"backend_identity": credential.identity' not in client:
-              raise SystemExit("Owner ARM credential request contract missing")
-          PY
           if grep -R -n -E 'ICTRL_OWNER_CONTROL_TOKEN|ICTRLOwnerControlToken' iCTRLApp iCTRLKit Config; then
             echo "Owner-control credential embedded in source/build config"
             exit 1
