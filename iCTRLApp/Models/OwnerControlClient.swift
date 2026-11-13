@@ -20,6 +20,7 @@ enum OwnerControlClientError: LocalizedError {
     }
 }
 
+// Background V2: direct Companion-to-Observation authority transport.
 final class OwnerControlClient {
     struct Configuration {
         let baseURL: URL
