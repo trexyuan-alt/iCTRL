@@ -56,7 +56,7 @@ jobs:
           fi
           grep -F 'client.off' iCTRLApp/Models/AppState.swift
           grep -F 'self.stopServer()' iCTRLApp/Models/AppState.swift
-          grep -F '/companion' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'appendingPathComponent("companion")' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'Authorization' iCTRLApp/Models/OwnerControlClient.swift
 
       - name: Build unsigned release IPAs
