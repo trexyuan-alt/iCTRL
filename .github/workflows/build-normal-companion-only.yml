@@ -1,0 +1,92 @@
+name: Build normal iCTRL Companion only
+
+on:
+  push:
+    branches:
+      - build-normal-companion-44d69-20261113
+
+permissions:
+  contents: read
+
+jobs:
+  companion-only:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact tested Companion source
+        uses: actions/checkout@v4
+        with:
+          ref: 44d69bc2af1ebf4a3a212ddbdb76dab53df14113
+
+      - name: Verify exact source
+        run: |
+          test "$(git rev-parse HEAD)" = "44d69bc2af1ebf4a3a212ddbdb76dab53df14113"
+
+      - name: Select Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project and fetch framework
+        run: |
+          bash Scripts/fetch-idevice.sh
+          xcodegen generate --quiet
+          ./Scripts/stamp-build.sh
+
+      - name: Build normal Companion target only
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_PREFIX="$(sed -nE 's/^ICTRL_BUNDLE_PREFIX[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' Config/Signing.xcconfig)"
+          OUT="$PWD/build/companion-only"
+          mkdir -p "$OUT"
+          xcodebuild build \
+            -project iCTRL.xcodeproj \
+            -target iCTRL \
+            -configuration Debug \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            ICTRL_BUNDLE_PREFIX="$BUNDLE_PREFIX" \
+            ARCHS=arm64 \
+            CONFIGURATION_BUILD_DIR="$OUT/Debug-iphoneos" \
+            SYMROOT="$OUT" \
+            OBJROOT="$OUT/obj"
+          test -d "$OUT/Debug-iphoneos/iCTRL.app"
+          if find "$OUT" -name 'iCTRLUITests-Runner.app' -o -name '*.xctest' | grep -q .; then
+            echo "Runner/XCTest artifact unexpectedly produced"
+            exit 1
+          fi
+
+      - name: Package only normal iCTRL.ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/companion-only/Debug-iphoneos/iCTRL.app"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          codesign --force --sign - "$APP"
+          rm -rf "$PWD/build/companion-only/package"
+          mkdir -p "$PWD/build/companion-only/package/Payload"
+          cp -R "$APP" "$PWD/build/companion-only/package/Payload/"
+          cd "$PWD/build/companion-only/package"
+          zip -qr "$GITHUB_WORKSPACE/iCTRL.ipa" Payload/
+          cd "$GITHUB_WORKSPACE"
+          unzip -l iCTRL.ipa | tee /tmp/ipa-list.txt
+          if grep -E 'iCTRLUITests-Runner|\.xctest|XCTest\.framework' /tmp/ipa-list.txt; then
+            echo "Runner/XCTest content found in normal Companion IPA"
+            exit 1
+          fi
+          shasum -a 256 iCTRL.ipa
+
+      - name: Upload normal Companion IPA only
+        uses: actions/upload-artifact@v4
+        with:
+          name: iCTRL-normal-companion-44d69
+          path: iCTRL.ipa
+          if-no-files-found: error
+          retention-days: 14
