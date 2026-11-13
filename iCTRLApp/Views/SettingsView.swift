@@ -297,10 +297,20 @@ struct SettingsView: View {
                 } label: {
                     Text(L10n.t(.runnerLogs))
                 }
-                Button(role: .destructive) {
-                    stopRunner()
-                } label: {
-                    Label(L10n.t(.stopServerButton), systemImage: "stop.fill")
+                if appState.ownerControlActive {
+                    Button(role: .destructive) {
+                        stopRunner()
+                    } label: {
+                        Label(L10n.t(.stopServerButton), systemImage: "stop.fill")
+                    }
+                    .disabled(appState.ownerControlBusy)
+                } else {
+                    Button {
+                        startRunner()
+                    } label: {
+                        Label(L10n.t(.startServer), systemImage: "play.fill")
+                    }
+                    .disabled(!ddi.isMounted || appState.ownerControlBusy)
                 }
             } else {
                 // Start lives here rather than in the toolbar: it belongs beside
@@ -311,7 +321,7 @@ struct SettingsView: View {
                 } label: {
                     Label(L10n.t(.startServer), systemImage: "play.fill")
                 }
-                .disabled(!ddi.isMounted)
+                .disabled(!ddi.isMounted || appState.ownerControlBusy)
             }
         } header: {
             Text(L10n.t(.serverSectionTitle))
@@ -327,15 +337,19 @@ struct SettingsView: View {
     }
 
     private func stopRunner() {
-        // LOCAL/OOB emergency stop: this is an in-process call, not an RPC.
-        // It therefore stays independent of the mounted ChatGPT/MCP transport.
-        appState.stopServer()
-        Task { await runner.check() }
+        // Explicit authenticated OOB revoke. The local :8200 listener is closed
+        // only after the authoritative backend ACKs Owner OFF.
+        appState.stopOwnerControl()
+        Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await runner.check()
+        }
     }
 
     private func startRunner() {
-        // Production start: bind :8200 in this normal app. No XCTest/testmanagerd.
-        appState.startServer()
+        // Explicit authenticated Owner ARM. Endpoint discovery is local; the
+        // authority request goes directly to Observation, not through MCP.
+        appState.startOwnerControl()
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()
