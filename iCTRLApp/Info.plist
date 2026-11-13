@@ -64,6 +64,8 @@
 		<string>_ictrl._tcp</string>
 		<string>_remotepairing._tcp</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>iCTRL uses the local network to discover this iPhone&apos;s RemotePairing service for Owner-authorized control.</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>ictrl</string>
