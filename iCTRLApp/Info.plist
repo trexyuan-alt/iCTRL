@@ -59,6 +59,14 @@
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<!-- Background V2 Owner-control OOB. Values are injected from the
+	     developer's private Signing.xcconfig; no credential is committed here. -->
+	<key>ICTRLOwnerControlBaseURL</key>
+	<string>$(ICTRL_OWNER_CONTROL_BASE_URL)</string>
+	<key>ICTRLOwnerControlIdentity</key>
+	<string>$(ICTRL_OWNER_CONTROL_IDENTITY)</string>
+	<key>ICTRLOwnerControlToken</key>
+	<string>$(ICTRL_OWNER_CONTROL_TOKEN)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ictrl._tcp</string>
