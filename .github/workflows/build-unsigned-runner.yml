@@ -56,7 +56,8 @@ jobs:
           fi
           grep -F 'client.off' iCTRLApp/Models/AppState.swift
           grep -F 'self.stopServer()' iCTRLApp/Models/AppState.swift
-          grep -F 'appendingPathComponent("companion")' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'appendingPathComponent("owner")' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'appendingPathComponent("authority")' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'Authorization' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'KeychainStore.save' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'owner_control_provision' iCTRLApp/Models/AppState.swift
