@@ -17,13 +17,14 @@ class AppState: ObservableObject {
     @Published var serverError: String?
     @Published var ownerControlActive = false
     @Published var ownerControlBusy = false
+    @Published var ownerControlProvisioned = OwnerControlCredentialStore.load() != nil
 
     @AppStorage("autoStartServer") var autoStartServer = false
     @AppStorage("serverPort") var serverPort = 8200
     @AppStorage("allowRemoteAccess") var allowRemoteAccess = true
 
     private var server: JSONRPCServer?
-    private lazy var ownerControlClient = OwnerControlClient.fromBundle()
+    private var ownerControlClient: OwnerControlClient? { OwnerControlClient.fromKeychain() }
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -68,6 +69,41 @@ class AppState: ObservableObject {
 
         s.onRPCRequest = { method, params, completion in
             switch method {
+            case "owner_control_provision":
+                guard let params,
+                      params.count == 1,
+                      let baseURL = params["base_url"]?.stringValue else {
+                    completion(nil, .invalidParams)
+                    return
+                }
+                do {
+                    let credential = try OwnerControlCredentialStore.rotate(baseURL: baseURL)
+                    DispatchQueue.main.async {
+                        self.ownerControlProvisioned = true
+                        self.serverError = nil
+                    }
+                    completion([
+                        "identity": .string(credential.identity),
+                        "token": .string(credential.token),
+                        "storage": .string("keychain"),
+                        "scope": .string("owner_arm_off_only"),
+                    ], nil)
+                } catch {
+                    completion(nil, .serverError("Owner control provisioning failed"))
+                }
+
+            case "owner_control_clear":
+                guard params == nil || params?.isEmpty == true else {
+                    completion(nil, .invalidParams)
+                    return
+                }
+                OwnerControlCredentialStore.clear()
+                DispatchQueue.main.async {
+                    self.ownerControlProvisioned = false
+                    self.ownerControlActive = false
+                }
+                completion(["cleared": .bool(true)], nil)
+
             case "get_current_remotepairing_endpoint", "remotepairing_endpoint":
                 guard params == nil || params?.isEmpty == true else {
                     completion(nil, .invalidParams)
@@ -139,10 +175,20 @@ class AppState: ObservableObject {
     /// ChatGPT/MCP and Companion :8200 are not part of this authority path.
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
-        ownerControlBusy = true
         serverError = nil
         startServer()
 
+        // First install / rotated credential bootstrap: keep the normal Companion
+        // foreground listener available for the already-paired encrypted
+        // provisioning RPC. Do not create Owner authority until a Keychain
+        // credential exists and the Owner presses ON again.
+        guard ownerControlProvisioned, ownerControlClient != nil else {
+            ownerControlActive = false
+            serverError = "Owner control credential is not provisioned yet. Keep iCTRL open for secure provisioning."
+            return
+        }
+
+        ownerControlBusy = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let resolved = RemotePairingEndpointOracle.resolve()
             DispatchQueue.main.async {
