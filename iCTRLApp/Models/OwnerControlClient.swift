@@ -99,30 +99,11 @@ final class OwnerControlClient {
         return OwnerControlClient(credential: credential)
     }
 
-    func arm(endpoint: [String: JSONValue], completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let port = endpoint["port"]?.intValue,
-              (1...65535).contains(port),
-              let identifier = endpoint["identifier"]?.stringValue,
-              !identifier.isEmpty,
-              let authTag = endpoint["authTag"]?.stringValue,
-              !authTag.isEmpty,
-              endpoint["service_type"]?.stringValue == "_remotepairing._tcp.local." else {
-            completion(.failure(OwnerControlClientError.endpointInvalid))
-            return
-        }
-
-        var payload: [String: Any] = [
+    func arm(completion: @escaping (Result<Void, Error>) -> Void) {
+        send(payload: [
             "backend_identity": credential.identity,
             "action": "arm",
-            "observed_at": ISO8601DateFormatter().string(from: Date()),
-            "port": port,
-            "identifier": identifier,
-            "authTag": authTag,
-        ]
-        if let wire = endpoint["wireProtocolVersion"]?.stringValue, !wire.isEmpty {
-            payload["wireProtocolVersion"] = wire
-        }
-        send(payload: payload, completion: completion)
+        ], completion: completion)
     }
 
     func off(completion: @escaping (Result<Void, Error>) -> Void) {
