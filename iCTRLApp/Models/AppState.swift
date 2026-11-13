@@ -170,9 +170,11 @@ class AppState: ObservableObject {
 
     /// Explicit Owner ARM ingress.
     ///
-    /// The normal app resolves the current RemotePairing endpoint locally, then
-    /// sends one authenticated HTTPS OOB ARM request directly to Observation.
-    /// ChatGPT/MCP and Companion :8200 are not part of this authority path.
+    /// Owner authorization is carried only by the Keychain-backed Owner
+    /// credential. The backend selects a CURRENT cryptographically validated
+    /// RemotePairing snapshot and proves live RSD before creating authority.
+    /// Bonjour remains available separately through the foreground Companion
+    /// endpoint oracle for bootstrap/refresh, but it is not an ARM dependency.
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
         serverError = nil
@@ -182,43 +184,27 @@ class AppState: ObservableObject {
         // foreground listener available for the already-paired encrypted
         // provisioning RPC. Do not create Owner authority until a Keychain
         // credential exists and the Owner presses ON again.
-        guard ownerControlProvisioned, ownerControlClient != nil else {
+        guard ownerControlProvisioned, let client = ownerControlClient else {
             ownerControlActive = false
             serverError = "Owner control credential is not provisioned yet. Keep iCTRL open for secure provisioning."
             return
         }
 
         ownerControlBusy = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let resolved = RemotePairingEndpointOracle.resolve()
+        client.arm { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard let endpoint = resolved.0, resolved.1 == nil else {
-                    self.ownerControlBusy = false
-                    self.serverError = "Owner ARM failed: RemotePairing endpoint unavailable."
-                    self.stopServer()
-                    return
-                }
-                guard let client = self.ownerControlClient else {
-                    self.ownerControlBusy = false
-                    self.serverError = "Owner ARM failed: OOB configuration unavailable."
-                    self.stopServer()
-                    return
-                }
-                client.arm(endpoint: endpoint) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.ownerControlBusy = false
-                        switch result {
-                        case .success:
-                            self.ownerControlActive = true
-                            self.serverError = nil
-                        case .failure(let error):
-                            self.ownerControlActive = false
-                            self.serverError = "Owner ARM failed: \(error.localizedDescription)"
-                            self.stopServer()
-                        }
-                    }
+                self.ownerControlBusy = false
+                switch result {
+                case .success:
+                    self.ownerControlActive = true
+                    self.serverError = nil
+                case .failure(let error):
+                    self.ownerControlActive = false
+                    // ARM failure must not destroy unrelated foreground
+                    // Companion service state. :8200 remains available for
+                    // provisioning/bootstrap/endpoint refresh.
+                    self.serverError = "Owner ARM failed: \(error.localizedDescription)"
                 }
             }
         }
