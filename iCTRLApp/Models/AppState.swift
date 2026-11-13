@@ -15,12 +15,15 @@ class AppState: ObservableObject {
     @Published var pendingAuthRequest: PendingAuth?
     @Published var serverAddress: String = "—"
     @Published var serverError: String?
+    @Published var ownerControlActive = false
+    @Published var ownerControlBusy = false
 
     @AppStorage("autoStartServer") var autoStartServer = false
     @AppStorage("serverPort") var serverPort = 8200
     @AppStorage("allowRemoteAccess") var allowRemoteAccess = true
 
     private var server: JSONRPCServer?
+    private lazy var ownerControlClient = OwnerControlClient.fromBundle()
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -129,11 +132,81 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Local independent emergency STOP.
+    /// Explicit Owner ARM ingress.
     ///
-    /// This does not traverse /rpc or the mounted ChatGPT MCP transport. Closing
-    /// :8200 removes the old warm Runner/Companion authority; CURRENT backend P0
-    /// Runner-loss handling then invalidates the old control generation.
+    /// The normal app resolves the current RemotePairing endpoint locally, then
+    /// sends one authenticated HTTPS OOB ARM request directly to Observation.
+    /// ChatGPT/MCP and Companion :8200 are not part of this authority path.
+    func startOwnerControl() {
+        guard !ownerControlBusy else { return }
+        ownerControlBusy = true
+        serverError = nil
+        startServer()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let resolved = RemotePairingEndpointOracle.resolve()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let endpoint = resolved.0, resolved.1 == nil else {
+                    self.ownerControlBusy = false
+                    self.serverError = "Owner ARM failed: RemotePairing endpoint unavailable."
+                    self.stopServer()
+                    return
+                }
+                guard let client = self.ownerControlClient else {
+                    self.ownerControlBusy = false
+                    self.serverError = "Owner ARM failed: OOB configuration unavailable."
+                    self.stopServer()
+                    return
+                }
+                client.arm(endpoint: endpoint) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.ownerControlBusy = false
+                        switch result {
+                        case .success:
+                            self.ownerControlActive = true
+                            self.serverError = nil
+                        case .failure(let error):
+                            self.ownerControlActive = false
+                            self.serverError = "Owner ARM failed: \(error.localizedDescription)"
+                            self.stopServer()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Explicit independent Owner OFF / emergency STOP ingress.
+    ///
+    /// OFF is acknowledged by the authoritative backend before :8200 is closed.
+    /// If the OOB request fails, the app must not pretend authority was revoked
+    /// merely because the local Companion listener disappeared.
+    func stopOwnerControl() {
+        guard !ownerControlBusy else { return }
+        guard let client = ownerControlClient else {
+            serverError = "Owner OFF failed: OOB configuration unavailable. Remote authority may still be active."
+            return
+        }
+        ownerControlBusy = true
+        serverError = nil
+        client.off { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.ownerControlBusy = false
+                switch result {
+                case .success:
+                    self.ownerControlActive = false
+                    self.stopServer()
+                case .failure(let error):
+                    self.serverError = "Owner OFF failed: \(error.localizedDescription). Remote authority may still be active."
+                }
+            }
+        }
+    }
+
+    /// Local listener teardown only. This is NOT an authority revoke in V2.
     func stopServer() {
         autoStartServer = false
         server?.stop()
