@@ -5,6 +5,7 @@ on:
     branches:
       - iphone-endpoint-oracle-20261102
       - zero-xctest-companion-20261112
+      - background-v2-local-network-fix-20261113
   workflow_dispatch:
 
 permissions:
@@ -60,6 +61,8 @@ jobs:
           grep -F 'Authorization' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'KeychainStore.save' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'owner_control_provision' iCTRLApp/Models/AppState.swift
+          grep -F '<key>NSLocalNetworkUsageDescription</key>' iCTRLApp/Info.plist
+          grep -F 'RemotePairing' iCTRLApp/Info.plist
           if grep -R -n -E 'ICTRL_OWNER_CONTROL_TOKEN|ICTRLOwnerControlToken' iCTRLApp iCTRLKit Config; then
             echo "Owner-control credential embedded in source/build config"
             exit 1
