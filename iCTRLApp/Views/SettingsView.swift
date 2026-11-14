@@ -310,7 +310,7 @@ struct SettingsView: View {
                     } label: {
                         Label(L10n.t(.startServer), systemImage: "play.fill")
                     }
-                    .disabled(!ddi.isMounted || appState.ownerControlBusy)
+                    .disabled(appState.ownerControlBusy)
                 }
             } else {
                 // Start lives here rather than in the toolbar: it belongs beside
@@ -321,7 +321,7 @@ struct SettingsView: View {
                 } label: {
                     Label(L10n.t(.startServer), systemImage: "play.fill")
                 }
-                .disabled(!ddi.isMounted || appState.ownerControlBusy)
+                .disabled(appState.ownerControlBusy)
             }
         } header: {
             Text(L10n.t(.serverSectionTitle))
@@ -347,9 +347,9 @@ struct SettingsView: View {
     }
 
     private func startRunner() {
-        // Explicit authenticated Owner ARM. Endpoint discovery is local; the
-        // authority request goes directly to Observation, not through MCP.
-        appState.startOwnerControl()
+        // "Start Service" controls only the normal ZERO-XCTEST Companion
+        // listener. It never creates Owner authority.
+        appState.startServer()
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()
