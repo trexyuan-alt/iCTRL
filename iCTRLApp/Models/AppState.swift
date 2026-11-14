@@ -96,7 +96,7 @@ class AppState: ObservableObject {
                     return
                 }
                 do {
-                    let credential = try OwnerControlCredentialStore.rotate(baseURL: baseURL)
+                    let credential = try OwnerControlCredentialStore.ensure(baseURL: baseURL)
                     DispatchQueue.main.async {
                         self.ownerControlProvisioned = true
                         self.serverError = nil
