@@ -3,7 +3,7 @@ name: Build normal iCTRL Companion only
 on:
   push:
     branches:
-      - remotepairing-recovery-gate-20261114
+      - owner-arm-ui-20261114
 
 permissions:
   contents: read
@@ -27,6 +27,10 @@ jobs:
           ! grep -F 'appState.stopOwnerControl()' iCTRLApp/Views/SettingsView.swift
           grep -F 'appState.setApplicationActive(phase == .active)' iCTRLApp/iCTRLApp.swift
           grep -F 'case "recovery_pairing_gate":' iCTRLApp/Models/AppState.swift
+          grep -F 'Label("Owner ARM", systemImage: "power.circle.fill")' iCTRLApp/Views/SettingsView.swift
+          grep -F 'Label("Owner OFF", systemImage: "stop.circle.fill")' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.startOwnerControl()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.stopOwnerControl()' iCTRLApp/Views/SettingsView.swift
           grep -F 'guard self.appIsActive, self.isServerRunning else {' iCTRLApp/Models/AppState.swift
           grep -F 'let deviceID = NearbyIdentity.deviceID' iCTRLApp/Models/AppState.swift
           grep -F 'RemotePairingEndpointOracle.resolve()' iCTRLApp/Models/AppState.swift
