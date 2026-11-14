@@ -107,8 +107,11 @@ final class OwnerControlClient {
             self.session = session
         } else {
             let cfg = URLSessionConfiguration.ephemeral
+            // OFF remains a short fail-fast request. ARM may legitimately need
+            // a cold RemotePairing -> RSD bootstrap, whose backend readiness
+            // budget is 35 seconds, so the resource budget must exceed that.
             cfg.timeoutIntervalForRequest = 5
-            cfg.timeoutIntervalForResource = 7
+            cfg.timeoutIntervalForResource = 45
             cfg.waitsForConnectivity = false
             self.session = URLSession(configuration: cfg)
         }
@@ -123,17 +126,21 @@ final class OwnerControlClient {
         send(payload: [
             "backend_identity": credential.identity,
             "action": "arm",
-        ], completion: completion)
+        ], requestTimeout: 40, completion: completion)
     }
 
     func off(completion: @escaping (Result<Void, Error>) -> Void) {
         send(payload: [
             "backend_identity": credential.identity,
             "action": "off",
-        ], completion: completion)
+        ], requestTimeout: 5, completion: completion)
     }
 
-    private func send(payload: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
+    private func send(
+        payload: [String: Any],
+        requestTimeout: TimeInterval,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
         guard let base = URL(string: credential.baseURL) else {
             completion(.failure(OwnerControlClientError.configurationUnavailable))
             return
@@ -147,6 +154,7 @@ final class OwnerControlClient {
             return
         }
         var request = URLRequest(url: url)
+        request.timeoutInterval = requestTimeout
         request.httpMethod = "POST"
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
