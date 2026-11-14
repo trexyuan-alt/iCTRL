@@ -297,27 +297,17 @@ struct SettingsView: View {
                 } label: {
                     Text(L10n.t(.runnerLogs))
                 }
-                if appState.ownerControlActive {
-                    Button(role: .destructive) {
-                        stopRunner()
-                    } label: {
-                        Label(L10n.t(.stopServerButton), systemImage: "stop.fill")
-                    }
-                    .disabled(appState.ownerControlBusy)
-                } else {
-                    Button {
-                        startRunner()
-                    } label: {
-                        Label(L10n.t(.startServer), systemImage: "play.fill")
-                    }
-                    .disabled(appState.ownerControlBusy)
+                Button(role: .destructive) {
+                    stopCompanion()
+                } label: {
+                    Label(L10n.t(.stopServerButton), systemImage: "stop.fill")
                 }
             } else {
                 // Start lives here rather than in the toolbar: it belongs beside
                 // the state it changes, and this is where the reason it might be
                 // disabled is already on screen.
                 Button {
-                    startRunner()
+                    startCompanion()
                 } label: {
                     Label(L10n.t(.startServer), systemImage: "play.fill")
                 }
@@ -336,17 +326,16 @@ struct SettingsView: View {
         }
     }
 
-    private func stopRunner() {
-        // Explicit authenticated OOB revoke. The local :8200 listener is closed
-        // only after the authoritative backend ACKs Owner OFF.
-        appState.stopOwnerControl()
+    private func stopCompanion() {
+        // Local Companion lifecycle only. This never changes Owner authority.
+        appState.stopServer()
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()
         }
     }
 
-    private func startRunner() {
+    private func startCompanion() {
         // "Start Service" controls only the normal ZERO-XCTEST Companion
         // listener. It never creates Owner authority.
         appState.startServer()
