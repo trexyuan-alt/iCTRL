@@ -39,6 +39,26 @@ enum OwnerControlCredentialStore {
     }
 
     @discardableResult
+    static func ensure(baseURL raw: String) throws -> OwnerControlCredential {
+        guard let url = URL(string: raw),
+              url.scheme == "https",
+              url.host != nil,
+              url.user == nil,
+              url.query == nil,
+              url.fragment == nil else {
+            throw OwnerControlClientError.provisioningFailed
+        }
+        let normalized = url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if let existing = load(),
+           existing.baseURL == normalized,
+           !existing.identity.isEmpty,
+           existing.token.count == 64 {
+            return existing
+        }
+        return try rotate(baseURL: normalized)
+    }
+
+    @discardableResult
     static func rotate(baseURL raw: String) throws -> OwnerControlCredential {
         guard let url = URL(string: raw),
               url.scheme == "https",
