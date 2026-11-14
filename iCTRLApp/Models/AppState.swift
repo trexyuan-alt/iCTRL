@@ -25,6 +25,9 @@ class AppState: ObservableObject {
 
     private var server: JSONRPCServer?
     private var ownerControlClient: OwnerControlClient? { OwnerControlClient.fromKeychain() }
+    private var appIsActive = false
+    private var serverStartInFlight = false
+    private var restartWorkItem: DispatchWorkItem?
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -43,26 +46,42 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Turn Companion authority ON.
+    /// Start or restart the foreground Companion service only.
     ///
-    /// Production must be remotely reachable because the Render Gateway reaches
-    /// :8200 through Tailscale. Authentication is still mandatory for /rpc.
+    /// This never creates Owner authority. The listener is remotely reachable
+    /// because the Render Gateway reaches :8200 through Tailscale; /rpc remains
+    /// authenticated.
     func startServer() {
-        guard !isServerRunning else { return }
-
         allowRemoteAccess = true
         autoStartServer = true
+        restartWorkItem?.cancel()
+        restartWorkItem = nil
 
+        guard !isServerRunning, !serverStartInFlight else { return }
+
+        // A failed/cancelled NWListener can leave a stale server object behind.
+        // Dispose it before constructing a fresh listener so a foreground return
+        // can recover without force-closing iCTRL.
+        if let stale = server {
+            server = nil
+            stale.stop()
+        }
+
+        serverStartInFlight = true
         let s = JSONRPCServer(port: UInt16(serverPort), localOnly: false)
         server = s
 
-        s.onStateChange = { [weak self] running in
+        s.onStateChange = { [weak self, weak s] running in
             DispatchQueue.main.async {
-                self?.isServerRunning = running
+                guard let self, let s, self.server === s else { return }
+                self.serverStartInFlight = false
+                self.isServerRunning = running
                 if running {
-                    self?.serverError = nil
-                    self?.refreshSessions()
-                    self?.updateServerAddress()
+                    self.serverError = nil
+                    self.refreshSessions()
+                    self.updateServerAddress()
+                } else {
+                    self.scheduleServerRestartIfNeeded()
                 }
             }
         }
@@ -109,8 +128,6 @@ class AppState: ObservableObject {
                     completion(nil, .invalidParams)
                     return
                 }
-                // Bonjour resolution intentionally blocks for a bounded snapshot;
-                // never run it on the app's main thread or the server listener.
                 DispatchQueue.global(qos: .userInitiated).async {
                     let result = RemotePairingEndpointOracle.resolve()
                     completion(result.0, result.1)
@@ -121,9 +138,6 @@ class AppState: ObservableObject {
                     completion(nil, .invalidParams)
                     return
                 }
-                // Preserve the backend health contract without touching XCTest.
-                // A normal app reports the real UIScreen geometry directly; unlike
-                // the old compatibility-mode Runner it does not need XCUIApplication.
                 DispatchQueue.main.async {
                     let bounds = UIScreen.main.bounds
                     let native = UIScreen.main.nativeBounds
@@ -162,10 +176,39 @@ class AppState: ObservableObject {
             serverError = nil
         } catch {
             print("🔴 Failed to start ZERO-XCTEST Companion: \(error)")
+            if server === s { server = nil }
+            serverStartInFlight = false
             serverError = error.localizedDescription
             isServerRunning = false
-            server = nil
+            scheduleServerRestartIfNeeded()
         }
+    }
+
+    /// Track foreground state and reconcile the Companion listener on resume.
+    func setApplicationActive(_ active: Bool) {
+        appIsActive = active
+        if active {
+            reconcileCompanionService()
+        } else {
+            restartWorkItem?.cancel()
+            restartWorkItem = nil
+        }
+    }
+
+    /// Rebuild a dead foreground listener without touching Owner authority.
+    func reconcileCompanionService() {
+        guard appIsActive, autoStartServer, !isServerRunning, !serverStartInFlight else { return }
+        startServer()
+    }
+
+    private func scheduleServerRestartIfNeeded() {
+        restartWorkItem?.cancel()
+        guard appIsActive, autoStartServer else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.reconcileCompanionService()
+        }
+        restartWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
     }
 
     /// Explicit Owner ARM ingress.
@@ -178,7 +221,6 @@ class AppState: ObservableObject {
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
         serverError = nil
-        startServer()
 
         // First install / rotated credential bootstrap: keep the normal Companion
         // foreground listener available for the already-paired encrypted
@@ -212,9 +254,8 @@ class AppState: ObservableObject {
 
     /// Explicit independent Owner OFF / emergency STOP ingress.
     ///
-    /// OFF is acknowledged by the authoritative backend before :8200 is closed.
-    /// If the OOB request fails, the app must not pretend authority was revoked
-    /// merely because the local Companion listener disappeared.
+    /// OFF is acknowledged by the authoritative backend and does not change
+    /// the independent :8200 Companion service lifecycle.
     func stopOwnerControl() {
         guard !ownerControlBusy else { return }
         guard let client = ownerControlClient else {
@@ -230,7 +271,6 @@ class AppState: ObservableObject {
                 switch result {
                 case .success:
                     self.ownerControlActive = false
-                    self.stopServer()
                 case .failure(let error):
                     self.serverError = "Owner OFF failed: \(error.localizedDescription). Remote authority may still be active."
                 }
@@ -241,8 +281,12 @@ class AppState: ObservableObject {
     /// Local listener teardown only. This is NOT an authority revoke in V2.
     func stopServer() {
         autoStartServer = false
-        server?.stop()
+        restartWorkItem?.cancel()
+        restartWorkItem = nil
+        serverStartInFlight = false
+        let current = server
         server = nil
+        current?.stop()
         isServerRunning = false
     }
 
