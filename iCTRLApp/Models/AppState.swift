@@ -133,6 +133,33 @@ class AppState: ObservableObject {
                     completion(result.0, result.1)
                 }
 
+            case "recovery_pairing_gate":
+                guard params == nil || params?.isEmpty == true else {
+                    completion(nil, .invalidParams)
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard self.appIsActive, self.isServerRunning else {
+                        completion(nil, .serverError("Recovery pairing requires foreground Companion"))
+                        return
+                    }
+                    let deviceID = NearbyIdentity.deviceID
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let result = RemotePairingEndpointOracle.resolve()
+                        guard let endpoint = result.0, result.1 == nil else {
+                            completion(nil, result.1 ?? .serverError("RemotePairing identity is ambiguous"))
+                            return
+                        }
+                        completion([
+                            "foreground_active": .bool(true),
+                            "device_id": .string(deviceID),
+                            "endpoint": .object(endpoint),
+                            "recovery_only": .bool(true),
+                            "ui_mutation": .bool(false),
+                        ], nil)
+                    }
+                }
+
             case "device_info":
                 guard params == nil || params?.isEmpty == true else {
                     completion(nil, .invalidParams)
