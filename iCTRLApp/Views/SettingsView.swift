@@ -67,6 +67,8 @@ struct SettingsView: View {
 
             serverSection
 
+            ownerControlSection
+
             deviceSection
 
             Section {
@@ -165,6 +167,63 @@ struct SettingsView: View {
             } else {
                 Text(ddi.advice ?? "The Developer Disk Image isn't mounted, so the CoreDevice control chain can't be prepared.")
             }
+        }
+    }
+
+    /// Explicit Owner mutation authority. This is independent from the
+    /// foreground Companion listener: Start Service never ARMs, and ARM never
+    /// starts XCTest/Runner UI automation.
+    private var ownerControlSection: some View {
+        Section {
+            HStack {
+                Text("Owner Control")
+                Spacer()
+                if appState.ownerControlBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(appState.ownerControlActive ? .green : .secondary)
+                            .frame(width: 8, height: 8)
+                        Text(appState.ownerControlActive ? "ARMED" : "DISARMED")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            HStack {
+                Text("Credential")
+                Spacer()
+                Text(appState.ownerControlProvisioned ? "Ready" : "Not provisioned")
+                    .foregroundColor(appState.ownerControlProvisioned ? .secondary : .orange)
+            }
+
+            if appState.ownerControlActive {
+                Button(role: .destructive) {
+                    appState.stopOwnerControl()
+                } label: {
+                    Label("Owner OFF", systemImage: "stop.circle.fill")
+                }
+                .disabled(appState.ownerControlBusy)
+            } else {
+                Button {
+                    appState.startOwnerControl()
+                } label: {
+                    Label("Owner ARM", systemImage: "power.circle.fill")
+                }
+                .disabled(appState.ownerControlBusy || !appState.ownerControlProvisioned)
+            }
+
+            if let error = appState.serverError,
+               error.hasPrefix("Owner ") {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        } header: {
+            Text("Owner Authority")
+        } footer: {
+            Text("ARM is required once before background mutation control. It is independent from the Companion service and never launches Runner/XCTest.")
         }
     }
 
