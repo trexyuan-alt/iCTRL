@@ -37,6 +37,12 @@ struct RPCMethodRegistry {
             returns: "{port, service_type, identifier, authTag, wireProtocolVersion?}"
         ),
         RPCMethodDef(
+            name: "recovery_pairing_gate",
+            description: "RECOVERY ONLY. Requires the normal Companion to be foreground/active and exactly one visible RemotePairing endpoint. Returns the stable Companion device id plus read-only endpoint metadata. Never pairs, ARMs, creates a generation, or performs UI mutation.",
+            params: [],
+            returns: "{foreground_active, device_id, endpoint:{port, service_type, identifier, authTag, wireProtocolVersion?}, recovery_only, ui_mutation}"
+        ),
+        RPCMethodDef(
             name: "remotepairing_endpoint",
             description: "Read-only endpoint oracle for this device's current RemotePairing TCP listener. Browses _remotepairing._tcp.local. on the phone, resolves exactly one visible service, and returns its SRV port plus identifier/authTag/wireProtocolVersion TXT fields when present. Performs no Pair Verify, tunnel, screenshot, HID, or other control action. Fails closed if no service or multiple distinct services are visible.",
             params: [],
