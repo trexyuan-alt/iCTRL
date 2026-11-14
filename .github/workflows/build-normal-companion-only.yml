@@ -3,7 +3,7 @@ name: Build normal iCTRL Companion only
 on:
   push:
     branches:
-      - background-v2-lifecycle-fix-20261114
+      - companion-ui-preserve-credential-20261114
 
 permissions:
   contents: read
@@ -19,8 +19,12 @@ jobs:
       - name: Verify ZERO-XCTEST lifecycle source
         run: |
           grep -F 'func reconcileCompanionService()' iCTRLApp/Models/AppState.swift
+          grep -F 'OwnerControlCredentialStore.ensure(baseURL: baseURL)' iCTRLApp/Models/AppState.swift
+          grep -F 'static func ensure(baseURL raw: String)' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'appState.startServer()' iCTRLApp/Views/SettingsView.swift
-          ! grep -A8 -F 'private func startRunner()' iCTRLApp/Views/SettingsView.swift | grep -F 'startOwnerControl()'
+          grep -F 'appState.stopServer()' iCTRLApp/Views/SettingsView.swift
+          ! grep -F 'appState.startOwnerControl()' iCTRLApp/Views/SettingsView.swift
+          ! grep -F 'appState.stopOwnerControl()' iCTRLApp/Views/SettingsView.swift
           grep -F 'appState.setApplicationActive(phase == .active)' iCTRLApp/iCTRLApp.swift
 
       - name: Select Xcode 16.4
@@ -87,7 +91,7 @@ jobs:
       - name: Upload normal Companion IPA only
         uses: actions/upload-artifact@v4
         with:
-          name: iCTRL-normal-companion-lifecycle-fix
+          name: iCTRL-normal-companion-recovery-fix
           path: iCTRL.ipa
           if-no-files-found: error
           retention-days: 14
