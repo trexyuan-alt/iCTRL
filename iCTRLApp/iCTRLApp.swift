@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct iCTRLApp: App {
     @StateObject private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var permission = NetworkPermission()
     /// Clients and log of the runner on this device; shared by Settings and Logs.
     @StateObject private var runnerAdmin = RunnerAdmin(port: 8200)
@@ -71,6 +72,12 @@ struct iCTRLApp: App {
                 Button(L10n.t(.laterButton), role: .cancel) {}
             } message: {
                 Text(String(format: L10n.t(.networkPermissionBody), permission.denied.joined(separator: ", ")))
+            }
+            .onChange(of: scenePhase) { phase in
+                appState.setApplicationActive(phase == .active)
+            }
+            .onAppear {
+                appState.setApplicationActive(scenePhase == .active)
             }
         }
     }
