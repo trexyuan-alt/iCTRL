@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - owner-arm-ui-20261114
+      - owner-arm-authoritative-refresh-20261117
 
 permissions:
   contents: read
@@ -35,6 +36,26 @@ jobs:
           grep -F 'let deviceID = NearbyIdentity.deviceID' iCTRLApp/Models/AppState.swift
           grep -F 'RemotePairingEndpointOracle.resolve()' iCTRLApp/Models/AppState.swift
           ! grep -A35 -F 'case "recovery_pairing_gate":' iCTRLApp/Models/AppState.swift | grep -F 'startOwnerControl()'
+
+      - name: Owner authority zero-phone state and wiring tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp Scripts/owner_authority_state_zero_phone.swift /tmp/main.swift
+          swiftc iCTRLApp/Models/OwnerAuthorityStatus.swift /tmp/main.swift -o /tmp/owner-authority-state-test
+          /tmp/owner-authority-state-test
+          grep -F 'func status(completion: @escaping (Result<OwnerAuthorityStatus, Error>) -> Void)' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'request.httpMethod = "GET"' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'request.setValue(credential.identity, forHTTPHeaderField: "X-Owner-Identity")' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'func refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift
+          grep -F 'scheduleOwnerAuthorityRefreshIfNeeded()' iCTRLApp/Models/AppState.swift
+          grep -F 'self.refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift
+          grep -F 'ownerAuthorityState = .unknown' iCTRLApp/Models/AppState.swift
+          grep -F 'Text("UNKNOWN").foregroundColor(.orange)' iCTRLApp/Views/SettingsView.swift
+          grep -F 'Refresh Owner Status' iCTRLApp/Views/SettingsView.swift
+          grep -F 'http://127.0.0.1:\(port)/whoami' iCTRLApp/Models/RunnerStatus.swift
+          ! grep -A45 -F 'func refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift | grep -E 'client\.(arm|off)'
+          ! grep -A30 -F 'private func scheduleOwnerAuthorityRefreshIfNeeded()' iCTRLApp/Models/AppState.swift | grep -E 'startOwnerControl|stopOwnerControl|client\.(arm|off)'
 
       - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
