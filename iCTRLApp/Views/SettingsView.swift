@@ -182,11 +182,17 @@ struct SettingsView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(appState.ownerControlActive ? .green : .secondary)
-                            .frame(width: 8, height: 8)
-                        Text(appState.ownerControlActive ? "ARMED" : "DISARMED")
-                            .foregroundColor(.secondary)
+                        switch appState.ownerAuthorityState {
+                        case .armed:
+                            Circle().fill(.green).frame(width: 8, height: 8)
+                            Text("ARMED").foregroundColor(.secondary)
+                        case .disarmed:
+                            Circle().fill(.secondary).frame(width: 8, height: 8)
+                            Text("DISARMED").foregroundColor(.secondary)
+                        case .unknown:
+                            Circle().fill(.orange).frame(width: 8, height: 8)
+                            Text("UNKNOWN").foregroundColor(.orange)
+                        }
                     }
                 }
             }
@@ -198,20 +204,44 @@ struct SettingsView: View {
                     .foregroundColor(appState.ownerControlProvisioned ? .secondary : .orange)
             }
 
-            if appState.ownerControlActive {
+            if let status = appState.ownerAuthorityStatus {
+                HStack {
+                    Text("Generation")
+                    Spacer()
+                    Text(verbatim: "\(status.controlGeneration)")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            switch appState.ownerAuthorityState {
+            case .armed:
                 Button(role: .destructive) {
                     appState.stopOwnerControl()
                 } label: {
                     Label("Owner OFF", systemImage: "stop.circle.fill")
                 }
                 .disabled(appState.ownerControlBusy)
-            } else {
+            case .disarmed:
                 Button {
                     appState.startOwnerControl()
                 } label: {
                     Label("Owner ARM", systemImage: "power.circle.fill")
                 }
                 .disabled(appState.ownerControlBusy || !appState.ownerControlProvisioned)
+            case .unknown:
+                Button {
+                    appState.refreshOwnerAuthorityStatus()
+                } label: {
+                    Label("Refresh Owner Status", systemImage: "arrow.clockwise")
+                }
+                .disabled(appState.ownerControlBusy || !appState.ownerControlProvisioned)
+            }
+
+            if let statusError = appState.ownerAuthorityStatusError {
+                Text(statusError)
+                    .font(.caption)
+                    .foregroundColor(.orange)
             }
 
             if let error = appState.serverError,
@@ -223,7 +253,7 @@ struct SettingsView: View {
         } header: {
             Text("Owner Authority")
         } footer: {
-            Text("ARM is required once before background mutation control. It is independent from the Companion service and never launches Runner/XCTest.")
+            Text("ARMED is shown only from the authenticated server authority snapshot. UNKNOWN never implies control authority and never auto-ARMs or auto-OFFs.")
         }
     }
 
