@@ -133,6 +133,51 @@ final class OwnerControlClient {
         ], completion: completion)
     }
 
+    func status(completion: @escaping (Result<OwnerAuthorityStatus, Error>) -> Void) {
+        guard let base = URL(string: credential.baseURL) else {
+            completion(.failure(OwnerControlClientError.configurationUnavailable))
+            return
+        }
+        let url = base
+            .appendingPathComponent("owner")
+            .appendingPathComponent("v1")
+            .appendingPathComponent("authority")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(credential.identity, forHTTPHeaderField: "X-Owner-Identity")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        session.dataTask(with: request) { data, response, error in
+            guard error == nil,
+                  let http = response as? HTTPURLResponse,
+                  let data,
+                  http.statusCode == 200,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  obj["ok"] as? Bool == true,
+                  let ownerArmed = obj["owner_armed"] as? Bool,
+                  let controlState = obj["control_state"] as? String,
+                  let generationNumber = obj["control_generation"] as? NSNumber,
+                  let controlEpoch = obj["control_epoch"] as? String else {
+                completion(.failure(error == nil ? OwnerControlClientError.rejected : OwnerControlClientError.transportFailed))
+                return
+            }
+            let generation = generationNumber.uint64Value
+            guard generation > 0,
+                  !controlEpoch.isEmpty,
+                  controlState == "RUNNING" || controlState == "STOPPED" else {
+                completion(.failure(OwnerControlClientError.rejected))
+                return
+            }
+            completion(.success(OwnerAuthorityStatus(
+                ownerArmed: ownerArmed,
+                controlState: controlState,
+                controlGeneration: generation,
+                controlEpoch: controlEpoch
+            )))
+        }.resume()
+    }
+
     private func send(payload: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
         guard let base = URL(string: credential.baseURL) else {
             completion(.failure(OwnerControlClientError.configurationUnavailable))
