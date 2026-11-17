@@ -15,9 +15,13 @@ class AppState: ObservableObject {
     @Published var pendingAuthRequest: PendingAuth?
     @Published var serverAddress: String = "—"
     @Published var serverError: String?
-    @Published var ownerControlActive = false
+    @Published private(set) var ownerAuthorityState: OwnerAuthorityUIState = .unknown
+    @Published private(set) var ownerAuthorityStatus: OwnerAuthorityStatus?
+    @Published private(set) var ownerAuthorityStatusError: String?
     @Published var ownerControlBusy = false
     @Published var ownerControlProvisioned = OwnerControlCredentialStore.load() != nil
+
+    var ownerControlActive: Bool { ownerAuthorityState == .armed }
 
     @AppStorage("autoStartServer") var autoStartServer = false
     @AppStorage("serverPort") var serverPort = 8200
@@ -28,6 +32,8 @@ class AppState: ObservableObject {
     private var appIsActive = false
     private var serverStartInFlight = false
     private var restartWorkItem: DispatchWorkItem?
+    private var ownerAuthorityRefreshInFlight = false
+    private var ownerAuthorityRefreshWorkItem: DispatchWorkItem?
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -80,6 +86,7 @@ class AppState: ObservableObject {
                     self.serverError = nil
                     self.refreshSessions()
                     self.updateServerAddress()
+                    self.refreshOwnerAuthorityStatus()
                 } else {
                     self.scheduleServerRestartIfNeeded()
                 }
@@ -99,7 +106,11 @@ class AppState: ObservableObject {
                     let credential = try OwnerControlCredentialStore.ensure(baseURL: baseURL)
                     DispatchQueue.main.async {
                         self.ownerControlProvisioned = true
+                        self.ownerAuthorityState = .unknown
+                        self.ownerAuthorityStatus = nil
+                        self.ownerAuthorityStatusError = nil
                         self.serverError = nil
+                        self.refreshOwnerAuthorityStatus()
                     }
                     completion([
                         "identity": .string(credential.identity),
@@ -119,7 +130,9 @@ class AppState: ObservableObject {
                 OwnerControlCredentialStore.clear()
                 DispatchQueue.main.async {
                     self.ownerControlProvisioned = false
-                    self.ownerControlActive = false
+                    self.ownerAuthorityState = .unknown
+                    self.ownerAuthorityStatus = nil
+                    self.ownerAuthorityStatusError = "Owner authority status unavailable."
                 }
                 completion(["cleared": .bool(true)], nil)
 
@@ -215,10 +228,20 @@ class AppState: ObservableObject {
     func setApplicationActive(_ active: Bool) {
         appIsActive = active
         if active {
+            // Never carry a cached ARMED presentation across a foreground
+            // transition. Reconcile the listener and immediately fetch the
+            // authoritative Owner snapshot before presenting control authority.
+            ownerAuthorityState = .unknown
+            ownerAuthorityStatus = nil
+            ownerAuthorityStatusError = nil
             reconcileCompanionService()
+            refreshOwnerAuthorityStatus()
+            scheduleOwnerAuthorityRefreshIfNeeded()
         } else {
             restartWorkItem?.cancel()
             restartWorkItem = nil
+            ownerAuthorityRefreshWorkItem?.cancel()
+            ownerAuthorityRefreshWorkItem = nil
         }
     }
 
@@ -238,6 +261,51 @@ class AppState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
     }
 
+    /// Refresh Owner UI state from the authenticated server snapshot only.
+    /// This method never sends ARM/OFF and never changes control generation.
+    func refreshOwnerAuthorityStatus() {
+        guard !ownerAuthorityRefreshInFlight, !ownerControlBusy else { return }
+        guard ownerControlProvisioned, let client = ownerControlClient else {
+            ownerAuthorityState = .unknown
+            ownerAuthorityStatus = nil
+            ownerAuthorityStatusError = "Owner authority status unavailable."
+            return
+        }
+
+        ownerAuthorityRefreshInFlight = true
+        client.status { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.ownerAuthorityRefreshInFlight = false
+                switch result {
+                case .success(let status):
+                    self.ownerAuthorityStatus = status
+                    self.ownerAuthorityState = status.uiState
+                    self.ownerAuthorityStatusError = nil
+                case .failure:
+                    // A failed read must never preserve a stale ARMED display.
+                    self.ownerAuthorityStatus = nil
+                    self.ownerAuthorityState = .unknown
+                    self.ownerAuthorityStatusError = "Owner authority status unavailable."
+                }
+            }
+        }
+    }
+
+    /// While foregrounded, periodically reconcile backend fail-closed revokes
+    /// that have no push channel back into the app.
+    private func scheduleOwnerAuthorityRefreshIfNeeded() {
+        ownerAuthorityRefreshWorkItem?.cancel()
+        guard appIsActive else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.refreshOwnerAuthorityStatus()
+            self.scheduleOwnerAuthorityRefreshIfNeeded()
+        }
+        ownerAuthorityRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
     /// Explicit Owner ARM ingress.
     ///
     /// Owner authorization is carried only by the Keychain-backed Owner
@@ -247,6 +315,11 @@ class AppState: ObservableObject {
     /// endpoint oracle for bootstrap/refresh, but it is not an ARM dependency.
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
+        guard ownerAuthorityState == .disarmed else {
+            serverError = "Owner ARM blocked: authoritative status is not DISARMED."
+            refreshOwnerAuthorityStatus()
+            return
+        }
         serverError = nil
 
         // First install / rotated credential bootstrap: keep the normal Companion
@@ -254,7 +327,8 @@ class AppState: ObservableObject {
         // provisioning RPC. Do not create Owner authority until a Keychain
         // credential exists and the Owner presses ON again.
         guard ownerControlProvisioned, let client = ownerControlClient else {
-            ownerControlActive = false
+            ownerAuthorityState = .unknown
+            ownerAuthorityStatus = nil
             serverError = "Owner control credential is not provisioned yet. Keep iCTRL open for secure provisioning."
             return
         }
@@ -264,17 +338,20 @@ class AppState: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.ownerControlBusy = false
+                self.ownerAuthorityState = .unknown
+                self.ownerAuthorityStatus = nil
                 switch result {
                 case .success:
-                    self.ownerControlActive = true
                     self.serverError = nil
                 case .failure(let error):
-                    self.ownerControlActive = false
                     // ARM failure must not destroy unrelated foreground
                     // Companion service state. :8200 remains available for
                     // provisioning/bootstrap/endpoint refresh.
                     self.serverError = "Owner ARM failed: \(error.localizedDescription)"
                 }
+                // The POST acknowledgement is not UI authority. Always fetch
+                // the authoritative snapshot after ARM completion.
+                self.refreshOwnerAuthorityStatus()
             }
         }
     }
@@ -285,7 +362,14 @@ class AppState: ObservableObject {
     /// the independent :8200 Companion service lifecycle.
     func stopOwnerControl() {
         guard !ownerControlBusy else { return }
+        guard ownerAuthorityState == .armed else {
+            serverError = "Owner OFF blocked: authoritative status is not ARMED."
+            refreshOwnerAuthorityStatus()
+            return
+        }
         guard let client = ownerControlClient else {
+            ownerAuthorityState = .unknown
+            ownerAuthorityStatus = nil
             serverError = "Owner OFF failed: OOB configuration unavailable. Remote authority may still be active."
             return
         }
@@ -295,12 +379,17 @@ class AppState: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.ownerControlBusy = false
+                self.ownerAuthorityState = .unknown
+                self.ownerAuthorityStatus = nil
                 switch result {
                 case .success:
-                    self.ownerControlActive = false
+                    self.serverError = nil
                 case .failure(let error):
                     self.serverError = "Owner OFF failed: \(error.localizedDescription). Remote authority may still be active."
                 }
+                // The POST acknowledgement is not UI authority. Always fetch
+                // the authoritative snapshot after OFF completion.
+                self.refreshOwnerAuthorityStatus()
             }
         }
     }
