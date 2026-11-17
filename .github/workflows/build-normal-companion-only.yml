@@ -55,7 +55,10 @@ jobs:
           grep -F 'Refresh Owner Status' iCTRLApp/Views/SettingsView.swift
           grep -F 'http://127.0.0.1:\(port)/whoami' iCTRLApp/Models/RunnerStatus.swift
           ! grep -A45 -F 'func refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift | grep -E 'client\.(arm|off)'
-          ! grep -A30 -F 'private func scheduleOwnerAuthorityRefreshIfNeeded()' iCTRLApp/Models/AppState.swift | grep -E 'startOwnerControl|stopOwnerControl|client\.(arm|off)'
+          ! grep -A12 -F 'private func scheduleOwnerAuthorityRefreshIfNeeded()' iCTRLApp/Models/AppState.swift | grep -E 'startOwnerControl|stopOwnerControl|client\.(arm|off)'
+          grep -A18 -F '// A failed read must never preserve a stale ARMED display.' iCTRLApp/Models/AppState.swift | grep -F 'ownerAuthorityState = .unknown'
+          grep -A16 -F 'func setApplicationActive(_ active: Bool)' iCTRLApp/Models/AppState.swift | grep -F 'refreshOwnerAuthorityStatus()'
+          grep -B8 -A10 -F 'self.refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift | grep -F 'if running {'
 
       - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
