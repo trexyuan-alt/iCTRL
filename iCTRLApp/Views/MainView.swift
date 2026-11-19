@@ -68,7 +68,7 @@ struct ServerControlView: View {
                 .padding(.top, 4)
 
                 Button {
-                    withAnimation { appState.stopServer() }
+                    withAnimation { appState.stopCompanionService() }
                 } label: {
                     Text("Stop Server")
                         .font(.headline)
@@ -113,7 +113,7 @@ struct ServerControlView: View {
                 }
 
                 Button {
-                    withAnimation { appState.startServer() }
+                    withAnimation { appState.startCompanionService() }
                 } label: {
                     Label("Start Server", systemImage: "power")
                         .font(.headline)

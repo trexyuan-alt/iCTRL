@@ -5,6 +5,7 @@ on:
     branches:
       - owner-arm-ui-20261114
       - owner-arm-authoritative-refresh-20261117
+      - owner-lifecycle-client-wiring-20261119
 
 permissions:
   contents: read
@@ -22,10 +23,14 @@ jobs:
           grep -F 'func reconcileCompanionService()' iCTRLApp/Models/AppState.swift
           grep -F 'OwnerControlCredentialStore.ensure(baseURL: baseURL)' iCTRLApp/Models/AppState.swift
           grep -F 'static func ensure(baseURL raw: String)' iCTRLApp/Models/OwnerControlClient.swift
-          grep -F 'appState.startServer()' iCTRLApp/Views/SettingsView.swift
-          grep -F 'appState.stopServer()' iCTRLApp/Views/SettingsView.swift
-          ! grep -F 'appState.startOwnerControl()' iCTRLApp/Views/SettingsView.swift
-          ! grep -F 'appState.stopOwnerControl()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.startCompanionService()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.stopCompanionService()' iCTRLApp/Views/SettingsView.swift
+          grep -F 'appState.startCompanionService()' iCTRLApp/Views/MainView.swift
+          grep -F 'appState.stopCompanionService()' iCTRLApp/Views/MainView.swift
+          ! grep -F 'appState.startServer()' iCTRLApp/Views/SettingsView.swift
+          ! grep -F 'appState.stopServer()' iCTRLApp/Views/SettingsView.swift
+          ! grep -F 'appState.startServer()' iCTRLApp/Views/MainView.swift
+          ! grep -F 'appState.stopServer()' iCTRLApp/Views/MainView.swift
           grep -F 'appState.setApplicationActive(phase == .active)' iCTRLApp/iCTRLApp.swift
           grep -F 'case "recovery_pairing_gate":' iCTRLApp/Models/AppState.swift
           grep -F 'Label("Owner ARM", systemImage: "power.circle.fill")' iCTRLApp/Views/SettingsView.swift
@@ -47,6 +52,26 @@ jobs:
           grep -F 'func status(completion: @escaping (Result<OwnerAuthorityStatus, Error>) -> Void)' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'request.httpMethod = "GET"' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'request.setValue(credential.identity, forHTTPHeaderField: "X-Owner-Identity")' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'func service(_ action: OwnerServiceAction' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F '.appendingPathComponent(endpoint)' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'let executionReady = obj["execution_ready"] as? Bool' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'let serviceState = obj["service_state"] as? String' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'client.service(.start)' iCTRLApp/Models/AppState.swift
+          grep -F 'client.service(.stop)' iCTRLApp/Models/AppState.swift
+          grep -F 'Text("Service")' iCTRLApp/Views/SettingsView.swift
+          grep -F 'Text("Execution Ready")' iCTRLApp/Views/SettingsView.swift
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("iCTRLApp/Models/AppState.swift").read_text()
+          start = src[src.index("func startCompanionService()"):src.index("/// Explicit Owner ARM ingress.")]
+          stop = src[src.index("func stopCompanionService()"):src.index("/// Explicit Owner ARM ingress.")]
+          assert start.index("startServer()") < start.index("client.service(.start)")
+          assert stop.index("client.service(.stop)") < stop.index("self.stopServer()")
+          assert "Service remains locally running." in stop
+          reconcile = src[src.index("func reconcileCompanionService()"):src.index("private func scheduleServerRestartIfNeeded()")]
+          assert "client.service" not in reconcile
+          print("PASS explicit service lifecycle source ordering")
+          PY
           grep -F 'func refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift
           grep -F 'scheduleOwnerAuthorityRefreshIfNeeded()' iCTRLApp/Models/AppState.swift
           grep -F 'self.refreshOwnerAuthorityStatus()' iCTRLApp/Models/AppState.swift

@@ -206,6 +206,19 @@ struct SettingsView: View {
 
             if let status = appState.ownerAuthorityStatus {
                 HStack {
+                    Text("Service")
+                    Spacer()
+                    Text(status.serviceState)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Text("Execution Ready")
+                    Spacer()
+                    Text(status.executionReady ? "READY" : "NOT READY")
+                        .foregroundColor(status.executionReady ? .green : .secondary)
+                }
+                HStack {
                     Text("Generation")
                     Spacer()
                     Text(verbatim: "\(status.controlGeneration)")
@@ -416,8 +429,7 @@ struct SettingsView: View {
     }
 
     private func stopCompanion() {
-        // Local Companion lifecycle only. This never changes Owner authority.
-        appState.stopServer()
+        appState.stopCompanionService()
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()
@@ -425,9 +437,7 @@ struct SettingsView: View {
     }
 
     private func startCompanion() {
-        // "Start Service" controls only the normal ZERO-XCTEST Companion
-        // listener. It never creates Owner authority.
-        appState.startServer()
+        appState.startCompanionService()
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             await runner.check()

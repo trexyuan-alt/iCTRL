@@ -96,6 +96,11 @@ enum OwnerControlCredentialStore {
     }
 }
 
+enum OwnerServiceAction: String {
+    case start
+    case stop
+}
+
 // Background V2: direct Companion-to-Observation authority transport.
 final class OwnerControlClient {
     private let credential: OwnerControlCredential
@@ -120,16 +125,23 @@ final class OwnerControlClient {
     }
 
     func arm(completion: @escaping (Result<Void, Error>) -> Void) {
-        send(payload: [
+        send(endpoint: "authority", payload: [
             "backend_identity": credential.identity,
             "action": "arm",
         ], completion: completion)
     }
 
     func off(completion: @escaping (Result<Void, Error>) -> Void) {
-        send(payload: [
+        send(endpoint: "authority", payload: [
             "backend_identity": credential.identity,
             "action": "off",
+        ], completion: completion)
+    }
+
+    func service(_ action: OwnerServiceAction, completion: @escaping (Result<Void, Error>) -> Void) {
+        send(endpoint: "service", payload: [
+            "backend_identity": credential.identity,
+            "action": action.rawValue,
         ], completion: completion)
     }
 
@@ -156,6 +168,8 @@ final class OwnerControlClient {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["ok"] as? Bool == true,
                   let ownerArmed = obj["owner_armed"] as? Bool,
+                  let executionReady = obj["execution_ready"] as? Bool,
+                  let serviceState = obj["service_state"] as? String,
                   let controlState = obj["control_state"] as? String,
                   let generationNumber = obj["control_generation"] as? NSNumber,
                   let controlEpoch = obj["control_epoch"] as? String else {
@@ -165,12 +179,15 @@ final class OwnerControlClient {
             let generation = generationNumber.uint64Value
             guard generation > 0,
                   !controlEpoch.isEmpty,
+                  serviceState == "ON" || serviceState == "OFF",
                   controlState == "RUNNING" || controlState == "STOPPED" else {
                 completion(.failure(OwnerControlClientError.rejected))
                 return
             }
             completion(.success(OwnerAuthorityStatus(
                 ownerArmed: ownerArmed,
+                executionReady: executionReady,
+                serviceState: serviceState,
                 controlState: controlState,
                 controlGeneration: generation,
                 controlEpoch: controlEpoch
@@ -178,7 +195,7 @@ final class OwnerControlClient {
         }.resume()
     }
 
-    private func send(payload: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
+    private func send(endpoint: String, payload: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
         guard let base = URL(string: credential.baseURL) else {
             completion(.failure(OwnerControlClientError.configurationUnavailable))
             return
@@ -186,7 +203,7 @@ final class OwnerControlClient {
         let url = base
             .appendingPathComponent("owner")
             .appendingPathComponent("v1")
-            .appendingPathComponent("authority")
+            .appendingPathComponent(endpoint)
         guard let body = try? JSONSerialization.data(withJSONObject: payload, options: []) else {
             completion(.failure(OwnerControlClientError.transportFailed))
             return

@@ -34,6 +34,7 @@ class AppState: ObservableObject {
     private var restartWorkItem: DispatchWorkItem?
     private var ownerAuthorityRefreshInFlight = false
     private var ownerAuthorityRefreshWorkItem: DispatchWorkItem?
+    private var serviceStartLifecyclePending = false
 
     struct PendingAuth: Identifiable {
         let id = UUID()
@@ -47,7 +48,7 @@ class AppState: ObservableObject {
 
         if autoStartServer {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.startServer()
+                self?.startCompanionService()
             }
         }
     }
@@ -87,6 +88,7 @@ class AppState: ObservableObject {
                     self.refreshSessions()
                     self.updateServerAddress()
                     self.refreshOwnerAuthorityStatus()
+                    self.fulfillPendingServiceStartIfNeeded()
                 } else {
                     self.scheduleServerRestartIfNeeded()
                 }
@@ -111,12 +113,13 @@ class AppState: ObservableObject {
                         self.ownerAuthorityStatusError = nil
                         self.serverError = nil
                         self.refreshOwnerAuthorityStatus()
+                        self.fulfillPendingServiceStartIfNeeded()
                     }
                     completion([
                         "identity": .string(credential.identity),
                         "token": .string(credential.token),
                         "storage": .string("keychain"),
-                        "scope": .string("owner_arm_off_only"),
+                        "scope": .string("owner_authority_service_lifecycle"),
                     ], nil)
                 } catch {
                     completion(nil, .serverError("Owner control provisioning failed"))
@@ -304,6 +307,73 @@ class AppState: ObservableObject {
         }
         ownerAuthorityRefreshWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
+    /// User-facing service START. Local Companion must be running before the
+    /// explicit service lifecycle event is sent. This never ARM's Owner authority.
+    func startCompanionService() {
+        guard !ownerControlBusy else { return }
+        serviceStartLifecyclePending = true
+        serverError = nil
+        startServer()
+        fulfillPendingServiceStartIfNeeded()
+    }
+
+    private func fulfillPendingServiceStartIfNeeded() {
+        guard serviceStartLifecyclePending, isServerRunning, !ownerControlBusy else { return }
+        guard ownerControlProvisioned, let client = ownerControlClient else { return }
+
+        // Consume the one explicit START intent before I/O. A failed OOB request is
+        // returned to the Owner; it is never retried implicitly.
+        serviceStartLifecyclePending = false
+        ownerControlBusy = true
+        client.service(.start) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.ownerControlBusy = false
+                self.ownerAuthorityState = .unknown
+                self.ownerAuthorityStatus = nil
+                switch result {
+                case .success:
+                    self.serverError = nil
+                case .failure(let error):
+                    self.serverError = "Owner service START failed: \(error.localizedDescription)"
+                }
+                self.refreshOwnerAuthorityStatus()
+            }
+        }
+    }
+
+    /// User-facing service STOP. Full server-side revoke must be acknowledged
+    /// before the local Companion listener is torn down. Failure never degrades
+    /// into a transport-only disconnect masquerading as STOP.
+    func stopCompanionService() {
+        guard !ownerControlBusy else { return }
+        serviceStartLifecyclePending = false
+        guard let client = ownerControlClient else {
+            serverError = "Owner service STOP failed: OOB configuration unavailable. Service remains locally running."
+            refreshOwnerAuthorityStatus()
+            return
+        }
+
+        ownerControlBusy = true
+        serverError = nil
+        client.service(.stop) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.ownerControlBusy = false
+                self.ownerAuthorityState = .unknown
+                self.ownerAuthorityStatus = nil
+                switch result {
+                case .success:
+                    self.stopServer()
+                    self.serverError = nil
+                case .failure(let error):
+                    self.serverError = "Owner service STOP failed: \(error.localizedDescription). Service remains locally running."
+                }
+                self.refreshOwnerAuthorityStatus()
+            }
+        }
     }
 
     /// Explicit Owner ARM ingress.
