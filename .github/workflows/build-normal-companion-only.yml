@@ -49,8 +49,8 @@ jobs:
           cp Scripts/owner_authority_state_zero_phone.swift /tmp/main.swift
           swiftc iCTRLApp/Models/OwnerAuthorityStatus.swift /tmp/main.swift -o /tmp/owner-authority-state-test
           /tmp/owner-authority-state-test
-          cp Scripts/owner_status_polling_zero_phone.swift /tmp/polling-main.swift
-          swiftc iCTRLApp/Models/OwnerAuthorityStatus.swift iCTRLApp/Models/OwnerAuthorityPollingPolicy.swift /tmp/polling-main.swift -o /tmp/owner-status-polling-test
+          cp Scripts/owner_status_polling_zero_phone.swift /tmp/main.swift
+          swiftc iCTRLApp/Models/OwnerAuthorityStatus.swift iCTRLApp/Models/OwnerAuthorityPollingPolicy.swift /tmp/main.swift -o /tmp/owner-status-polling-test
           /tmp/owner-status-polling-test
           grep -F 'func status(completion: @escaping (Result<OwnerAuthorityStatus, Error>) -> Void)' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'request.httpMethod = "GET"' iCTRLApp/Models/OwnerControlClient.swift
