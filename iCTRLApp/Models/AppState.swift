@@ -32,7 +32,7 @@ class AppState: ObservableObject {
     private var appIsActive = false
     private var serverStartInFlight = false
     private var restartWorkItem: DispatchWorkItem?
-    private var ownerAuthorityRefreshInFlight = false
+    @Published private(set) var ownerAuthorityRefreshInFlight = false
     private var ownerAuthorityRefreshWorkItem: DispatchWorkItem?
     private var serviceStartLifecyclePending = false
 
@@ -285,11 +285,11 @@ class AppState: ObservableObject {
                     self.ownerAuthorityStatus = status
                     self.ownerAuthorityState = status.uiState
                     self.ownerAuthorityStatusError = nil
-                case .failure:
+                case .failure(let error):
                     // A failed read must never preserve a stale ARMED display.
                     self.ownerAuthorityStatus = nil
                     self.ownerAuthorityState = .unknown
-                    self.ownerAuthorityStatusError = "Owner authority status unavailable."
+                    self.ownerAuthorityStatusError = "Owner authority status unavailable: \(error.localizedDescription)"
                 }
             }
         }
