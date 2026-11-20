@@ -34,6 +34,7 @@ class AppState: ObservableObject {
     private var restartWorkItem: DispatchWorkItem?
     @Published private(set) var ownerAuthorityRefreshInFlight = false
     private var ownerAuthorityRefreshWorkItem: DispatchWorkItem?
+    private var ownerAuthorityTransientUntil: Date?
     private var serviceStartLifecyclePending = false
 
     struct PendingAuth: Identifiable {
@@ -231,15 +232,15 @@ class AppState: ObservableObject {
     func setApplicationActive(_ active: Bool) {
         appIsActive = active
         if active {
-            // Never carry a cached ARMED presentation across a foreground
-            // transition. Reconcile the listener and immediately fetch the
-            // authoritative Owner snapshot before presenting control authority.
+            // Foreground always performs one immediate authoritative refresh.
+            // A short bounded fast window covers reconnect/recovery without
+            // leaving the app on permanent 2-second polling.
+            beginOwnerAuthorityTransientPolling(force: true)
             ownerAuthorityState = .unknown
             ownerAuthorityStatus = nil
             ownerAuthorityStatusError = nil
             reconcileCompanionService()
             refreshOwnerAuthorityStatus()
-            scheduleOwnerAuthorityRefreshIfNeeded()
         } else {
             restartWorkItem?.cancel()
             restartWorkItem = nil
@@ -264,14 +265,36 @@ class AppState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
     }
 
+    private func beginOwnerAuthorityTransientPolling(force: Bool = false) {
+        if force || ownerAuthorityTransientUntil == nil {
+            ownerAuthorityTransientUntil = Date().addingTimeInterval(
+                OwnerAuthorityPollingPolicy.transientWindow
+            )
+        }
+    }
+
+    /// Manual Refresh is always one immediate read. It also opens one bounded
+    /// fast-poll window so a recovering UNKNOWN/NOT READY state can settle.
+    func manualRefreshOwnerAuthorityStatus() {
+        beginOwnerAuthorityTransientPolling(force: true)
+        ownerAuthorityRefreshWorkItem?.cancel()
+        ownerAuthorityRefreshWorkItem = nil
+        refreshOwnerAuthorityStatus()
+    }
+
     /// Refresh Owner UI state from the authenticated server snapshot only.
     /// This method never sends ARM/OFF and never changes control generation.
     func refreshOwnerAuthorityStatus() {
         guard !ownerAuthorityRefreshInFlight, !ownerControlBusy else { return }
+        ownerAuthorityRefreshWorkItem?.cancel()
+        ownerAuthorityRefreshWorkItem = nil
+
         guard ownerControlProvisioned, let client = ownerControlClient else {
             ownerAuthorityState = .unknown
             ownerAuthorityStatus = nil
             ownerAuthorityStatusError = "Owner authority status unavailable."
+            beginOwnerAuthorityTransientPolling()
+            scheduleOwnerAuthorityRefreshIfNeeded()
             return
         }
 
@@ -285,34 +308,51 @@ class AppState: ObservableObject {
                     self.ownerAuthorityStatus = status
                     self.ownerAuthorityState = status.uiState
                     self.ownerAuthorityStatusError = nil
+                    if OwnerAuthorityPollingPolicy.isStable(status) {
+                        self.ownerAuthorityTransientUntil = nil
+                    } else {
+                        self.beginOwnerAuthorityTransientPolling()
+                    }
                 case .failure(let error):
                     // A failed read must never preserve a stale ARMED display.
+                    // Start at most one bounded fast window; after it expires,
+                    // keep the old deadline so failures back off to 15 seconds.
                     self.ownerAuthorityStatus = nil
                     self.ownerAuthorityState = .unknown
                     self.ownerAuthorityStatusError = "Owner authority status unavailable: \(error.localizedDescription)"
+                    self.beginOwnerAuthorityTransientPolling()
                 }
+                self.scheduleOwnerAuthorityRefreshIfNeeded()
             }
         }
     }
 
-    /// While foregrounded, periodically reconcile backend fail-closed revokes
-    /// that have no push channel back into the app.
+    /// Foreground-only adaptive polling. Transient recovery uses 2 seconds for
+    /// at most 20 seconds; stable or exhausted states use 15 seconds.
     private func scheduleOwnerAuthorityRefreshIfNeeded() {
         ownerAuthorityRefreshWorkItem?.cancel()
-        guard appIsActive else { return }
+        guard appIsActive else {
+            ownerAuthorityRefreshWorkItem = nil
+            return
+        }
+        let interval = OwnerAuthorityPollingPolicy.nextInterval(
+            now: Date(),
+            transientUntil: ownerAuthorityTransientUntil,
+            status: ownerAuthorityStatus,
+            transitionActive: ownerControlBusy || serviceStartLifecyclePending
+        )
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.refreshOwnerAuthorityStatus()
-            self.scheduleOwnerAuthorityRefreshIfNeeded()
+            self?.refreshOwnerAuthorityStatus()
         }
         ownerAuthorityRefreshWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: work)
     }
 
     /// User-facing service START. Local Companion must be running before the
     /// explicit service lifecycle event is sent. This never ARM's Owner authority.
     func startCompanionService() {
         guard !ownerControlBusy else { return }
+        beginOwnerAuthorityTransientPolling(force: true)
         serviceStartLifecyclePending = true
         serverError = nil
         startServer()
@@ -349,6 +389,7 @@ class AppState: ObservableObject {
     /// into a transport-only disconnect masquerading as STOP.
     func stopCompanionService() {
         guard !ownerControlBusy else { return }
+        beginOwnerAuthorityTransientPolling(force: true)
         serviceStartLifecyclePending = false
         guard let client = ownerControlClient else {
             serverError = "Owner service STOP failed: OOB configuration unavailable. Service remains locally running."
@@ -385,6 +426,7 @@ class AppState: ObservableObject {
     /// endpoint oracle for bootstrap/refresh, but it is not an ARM dependency.
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
+        beginOwnerAuthorityTransientPolling(force: true)
         guard ownerAuthorityState == .disarmed else {
             serverError = "Owner ARM blocked: authoritative status is not DISARMED."
             refreshOwnerAuthorityStatus()
@@ -432,6 +474,7 @@ class AppState: ObservableObject {
     /// the independent :8200 Companion service lifecycle.
     func stopOwnerControl() {
         guard !ownerControlBusy else { return }
+        beginOwnerAuthorityTransientPolling(force: true)
         guard ownerAuthorityState == .armed else {
             serverError = "Owner OFF blocked: authoritative status is not ARMED."
             refreshOwnerAuthorityStatus()

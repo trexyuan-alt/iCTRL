@@ -243,21 +243,23 @@ struct SettingsView: View {
                 }
                 .disabled(appState.ownerControlBusy || !appState.ownerControlProvisioned)
             case .unknown:
-                Button {
-                    appState.refreshOwnerAuthorityStatus()
-                } label: {
-                    if appState.ownerAuthorityRefreshInFlight {
-                        Label("Refreshing Owner Status", systemImage: "arrow.triangle.2.circlepath")
-                    } else {
-                        Label("Refresh Owner Status", systemImage: "arrow.clockwise")
-                    }
-                }
-                .disabled(
-                    appState.ownerControlBusy ||
-                    appState.ownerAuthorityRefreshInFlight ||
-                    !appState.ownerControlProvisioned
-                )
+                EmptyView()
             }
+
+            Button {
+                appState.manualRefreshOwnerAuthorityStatus()
+            } label: {
+                if appState.ownerAuthorityRefreshInFlight {
+                    Label("Refreshing Owner Status", systemImage: "arrow.triangle.2.circlepath")
+                } else {
+                    Label("Refresh Owner Status", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(
+                appState.ownerControlBusy ||
+                appState.ownerAuthorityRefreshInFlight ||
+                !appState.ownerControlProvisioned
+            )
 
             if let statusError = appState.ownerAuthorityStatusError {
                 Text(statusError)
