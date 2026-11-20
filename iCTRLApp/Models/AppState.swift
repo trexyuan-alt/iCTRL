@@ -99,14 +99,19 @@ class AppState: ObservableObject {
         s.onRPCRequest = { method, params, completion in
             switch method {
             case "owner_control_provision":
+                let diagnosticID = s.ownerProvisionDiagnosticID
+                s.ownerProvisionDiagnostic(diagnosticID, stage: "app_handler_entered")
                 guard let params,
                       params.count == 1,
                       let baseURL = params["base_url"]?.stringValue else {
+                    s.ownerProvisionDiagnostic(diagnosticID, stage: "params_validation", result: "FAIL")
                     completion(nil, .invalidParams)
                     return
                 }
+                s.ownerProvisionDiagnostic(diagnosticID, stage: "credential_store_enter")
                 do {
                     let credential = try OwnerControlCredentialStore.ensure(baseURL: baseURL)
+                    s.ownerProvisionDiagnostic(diagnosticID, stage: "credential_store_result", result: "PASS")
                     DispatchQueue.main.async {
                         self.ownerControlProvisioned = true
                         self.ownerAuthorityState = .unknown
@@ -123,6 +128,7 @@ class AppState: ObservableObject {
                         "scope": .string("owner_authority_service_lifecycle"),
                     ], nil)
                 } catch {
+                    s.ownerProvisionDiagnostic(diagnosticID, stage: "credential_store_result", result: "FAIL")
                     completion(nil, .serverError("Owner control provisioning failed"))
                 }
 

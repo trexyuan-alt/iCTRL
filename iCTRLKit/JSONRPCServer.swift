@@ -61,6 +61,22 @@ class JSONRPCServer {
         print(message)
     }
 
+    private static func ownerDiagnosticID(from headers: [String: String]) -> String? {
+        guard let raw = headers["x-owner-request-id"]?.lowercased(),
+              raw.count == 24,
+              raw.allSatisfy({ "0123456789abcdef".contains($0) }) else { return nil }
+        return raw
+    }
+
+    func ownerProvisionDiagnostic(_ id: String?, stage: String, result: String? = nil) {
+        guard let id else { return }
+        var message = "OWNER_RPC_DIAG owner_request_id=\(id) stage=\(stage)"
+        if let result { message += " result=\(result)" }
+        log(message)
+    }
+
+    private(set) var ownerProvisionDiagnosticID: String?
+
     init(port: UInt16 = 8200, localOnly: Bool = false) {
         self.port = port
         self.localOnly = localOnly
@@ -1076,6 +1092,11 @@ class JSONRPCServer {
         }
 
         let method = rpcRequest.method
+        let ownerDiagnosticID = method == "owner_control_provision" ? Self.ownerDiagnosticID(from: headers) : nil
+        if method == "owner_control_provision" {
+            ownerProvisionDiagnosticID = ownerDiagnosticID
+            ownerProvisionDiagnostic(ownerDiagnosticID, stage: "request_received")
+        }
         var params = rpcRequest.params
         // `config` may widen who can reach the device (nearby discovery), which
         // only a caller on this device may do. Tell it where this request came
@@ -1086,10 +1107,20 @@ class JSONRPCServer {
             p[Self.peerSourceParam] = .string(Self.peer(of: connection)?.via ?? PeerSource.other.rawValue)
             params = p
         }
+        if method == "owner_control_provision" {
+            ownerProvisionDiagnostic(ownerDiagnosticID, stage: "handler_entered")
+        }
         handler(method, params) { [weak self] result, error in
             let json = error.map { Self.errorJSON(rpcRequest.id, $0) }
                 ?? Self.resultJSON(rpcRequest.id, result ?? [:])
-            self?.sendSealed(connection, seal: seal, json: json)
+            if method == "owner_control_provision" {
+                self?.ownerProvisionDiagnostic(ownerDiagnosticID, stage: "response_generated",
+                                               result: error == nil ? "PASS" : "FAIL")
+            }
+            self?.sendSealed(connection, seal: seal, json: json, onSent: method == "owner_control_provision" ? { [weak self] sendError in
+                self?.ownerProvisionDiagnostic(ownerDiagnosticID, stage: "response_sent",
+                                               result: sendError == nil ? "PASS" : "FAIL")
+            } : nil)
             // Latency shortcut: when a UI-mutating RPC finishes, tell the video
             // pipeline to grab an extra keyframe *now* instead of waiting for
             // the next 1/fps tick. Without this, a 2 fps tap can wait up to
@@ -1098,14 +1129,18 @@ class JSONRPCServer {
                 self?.onRPCUIChanged?()
             }
         }
+        if method == "owner_control_provision" {
+            ownerProvisionDiagnosticID = nil
+        }
     }
 
     /// Encrypt a JSON-RPC reply into a response envelope and write it out.
     /// Always HTTP 200: transport succeeded, and the real status is inside the
     /// sealed body (an eavesdropper shouldn't learn outcomes from status codes).
-    private func sendSealed(_ connection: NWConnection, seal: (String) -> String, json: String) {
+    private func sendSealed(_ connection: NWConnection, seal: (String) -> String, json: String,
+                            onSent: ((NWError?) -> Void)? = nil) {
         sendHTTPResponse(connection: connection, status: 200,
-                         contentType: "application/json", body: seal(json))
+                         contentType: "application/json", body: seal(json), onSent: onSent)
     }
 
     /// Auth failures are sent in the CLEAR — the client has no usable key yet
@@ -1211,7 +1246,8 @@ class JSONRPCServer {
     }
 
     private func sendHTTPResponse(connection: NWConnection, status: Int, headers: [String: String] = [:],
-                                  contentType: String = "text/plain", body: String, cors: Bool = true) {
+                                  contentType: String = "text/plain", body: String, cors: Bool = true,
+                                  onSent: ((NWError?) -> Void)? = nil) {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
@@ -1245,7 +1281,8 @@ class JSONRPCServer {
         var responseData = responseString.data(using: .utf8) ?? Data()
         responseData.append(bodyData)
 
-        connection.send(content: responseData, completion: .contentProcessed { _ in
+        connection.send(content: responseData, completion: .contentProcessed { error in
+            onSent?(error)
             connection.cancel()
         })
     }
