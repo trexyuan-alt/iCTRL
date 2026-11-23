@@ -57,8 +57,41 @@ jobs:
           grep -F 'request.setValue(credential.identity, forHTTPHeaderField: "X-Owner-Identity")' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'func service(_ action: OwnerServiceAction' iCTRLApp/Models/OwnerControlClient.swift
           grep -F '.appendingPathComponent(endpoint)' iCTRLApp/Models/OwnerControlClient.swift
-          grep -F 'let executionReady = obj["execution_ready"] as? Bool' iCTRLApp/Models/OwnerControlClient.swift
-          grep -F 'let serviceState = obj["service_state"] as? String' iCTRLApp/Models/OwnerControlClient.swift
+          # Validate factual authority decoding without optional observations.
+          grep -F 'JSONDecoder().decode(OwnerAuthorityStatus.self, from: data)' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F '"expected_authority_epoch": expectedAuthorityEpoch' iCTRLApp/Models/OwnerControlClient.swift
+          cat > /tmp/main.swift <<'SWIFT'
+          import Foundation
+          let factual: [String: Any] = [
+              "owner_armed": false, "authority_epoch": 1,
+              "armed_generation": 0, "absolute_expires_at": "",
+              "control_state": "STOPPED", "control_generation": 1
+          ]
+          func decode(_ body: [String: Any]) throws -> OwnerAuthorityStatus {
+              try JSONDecoder().decode(OwnerAuthorityStatus.self,
+                  from: JSONSerialization.data(withJSONObject: body))
+          }
+          let status = try decode(factual)
+          precondition(status.ownerArmed == false && status.authorityEpoch == 1)
+          precondition(status.armedGeneration == 0 && status.absoluteExpiresAt.isEmpty)
+          precondition(status.controlState == "STOPPED" && status.controlGeneration == 1)
+          precondition(status.uiState == .disarmed)
+          for key in factual.keys {
+              var missing = factual
+              missing.removeValue(forKey: key)
+              precondition((try? decode(missing)) == nil, "Required authority field: \(key)")
+          }
+          // Optional observations cannot determine permission validity.
+          var observations = factual
+          observations["execution_ready"] = true
+          observations["service_state"] = "UNKNOWN"
+          observations["control_epoch"] = ""
+          let observed = try decode(observations)
+          precondition(observed.uiState == .disarmed)
+          print("PASS factual Owner authority contract; obsolete observations are optional")
+          SWIFT
+          swiftc iCTRLApp/Models/OwnerAuthorityStatus.swift /tmp/main.swift -o /tmp/owner-authority-contract-test
+          /tmp/owner-authority-contract-test
           grep -F 'client.service(.start)' iCTRLApp/Models/AppState.swift
           grep -F 'client.service(.stop)' iCTRLApp/Models/AppState.swift
           grep -F 'Text("Service")' iCTRLApp/Views/SettingsView.swift

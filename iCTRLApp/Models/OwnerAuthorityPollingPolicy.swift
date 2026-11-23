@@ -8,19 +8,7 @@ enum OwnerAuthorityPollingPolicy {
     static func isStable(_ status: OwnerAuthorityStatus?) -> Bool {
         guard let status else { return false }
 
-        if status.serviceState == "OFF" {
-            return !status.ownerArmed &&
-                !status.executionReady &&
-                status.controlState == "STOPPED"
-        }
-
-        guard status.serviceState == "ON" else { return false }
-
-        if !status.ownerArmed {
-            return !status.executionReady && status.controlState == "STOPPED"
-        }
-
-        return status.executionReady && status.controlState == "RUNNING"
+        return status.uiState != .unknown
     }
 
     static func nextInterval(

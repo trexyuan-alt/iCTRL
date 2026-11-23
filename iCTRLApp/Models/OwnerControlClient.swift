@@ -1,6 +1,9 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
-enum OwnerControlClientError: LocalizedError {
+enum OwnerControlClientError: LocalizedError, Equatable {
     case configurationUnavailable
     case endpointInvalid
     case transportFailed
@@ -14,7 +17,7 @@ enum OwnerControlClientError: LocalizedError {
         case .endpointInvalid:
             return "RemotePairing endpoint snapshot is invalid."
         case .transportFailed:
-            return "Owner control OOB request failed."
+            return "Owner control response delivery is uncertain; reconciling authoritative status."
         case .rejected:
             return "Owner control OOB request was rejected."
         case .provisioningFailed:
@@ -114,7 +117,9 @@ final class OwnerControlClient {
             let cfg = URLSessionConfiguration.ephemeral
             cfg.timeoutIntervalForRequest = 5
             cfg.timeoutIntervalForResource = 7
+            #if !os(Linux)
             cfg.waitsForConnectivity = false
+            #endif
             self.session = URLSession(configuration: cfg)
         }
     }
@@ -124,10 +129,11 @@ final class OwnerControlClient {
         return OwnerControlClient(credential: credential)
     }
 
-    func arm(completion: @escaping (Result<Void, Error>) -> Void) {
+    func arm(expectedAuthorityEpoch: UInt64, completion: @escaping (Result<Void, Error>) -> Void) {
         send(endpoint: "authority", payload: [
             "backend_identity": credential.identity,
             "action": "arm",
+            "expected_authority_epoch": expectedAuthorityEpoch,
         ], completion: completion)
     }
 
@@ -163,35 +169,15 @@ final class OwnerControlClient {
         session.dataTask(with: request) { data, response, error in
             guard error == nil,
                   let http = response as? HTTPURLResponse,
-                  let data,
-                  http.statusCode == 200,
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  obj["ok"] as? Bool == true,
-                  let ownerArmed = obj["owner_armed"] as? Bool,
-                  let executionReady = obj["execution_ready"] as? Bool,
-                  let serviceState = obj["service_state"] as? String,
-                  let controlState = obj["control_state"] as? String,
-                  let generationNumber = obj["control_generation"] as? NSNumber,
-                  let controlEpoch = obj["control_epoch"] as? String else {
-                completion(.failure(error == nil ? OwnerControlClientError.rejected : OwnerControlClientError.transportFailed))
+                  let data, http.statusCode == 200,
+                  let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  envelope["ok"] as? Bool == true,
+                  let status = try? JSONDecoder().decode(OwnerAuthorityStatus.self, from: data),
+                  status.uiState != .unknown else {
+                completion(.failure(OwnerControlClientError.transportFailed))
                 return
             }
-            let generation = generationNumber.uint64Value
-            guard generation > 0,
-                  !controlEpoch.isEmpty,
-                  serviceState == "ON" || serviceState == "OFF",
-                  controlState == "RUNNING" || controlState == "STOPPED" else {
-                completion(.failure(OwnerControlClientError.rejected))
-                return
-            }
-            completion(.success(OwnerAuthorityStatus(
-                ownerArmed: ownerArmed,
-                executionReady: executionReady,
-                serviceState: serviceState,
-                controlState: controlState,
-                controlGeneration: generation,
-                controlEpoch: controlEpoch
-            )))
+            completion(.success(status))
         }.resume()
     }
 
@@ -215,14 +201,20 @@ final class OwnerControlClient {
         request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
+        // One explicit POST only. Any uncertain delivery is reconciled by GET.
         session.dataTask(with: request) { data, response, error in
-            guard error == nil,
-                  let http = response as? HTTPURLResponse,
-                  let data,
-                  http.statusCode == 200,
+            guard error == nil, let http = response as? HTTPURLResponse else {
+                completion(.failure(OwnerControlClientError.transportFailed))
+                return
+            }
+            if [400, 401, 403, 409].contains(http.statusCode) {
+                completion(.failure(OwnerControlClientError.rejected))
+                return
+            }
+            guard http.statusCode == 200, let data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["ok"] as? Bool == true else {
-                completion(.failure(error == nil ? OwnerControlClientError.rejected : OwnerControlClientError.transportFailed))
+                completion(.failure(OwnerControlClientError.transportFailed))
                 return
             }
             completion(.success(()))

@@ -34,6 +34,7 @@ class AppState: ObservableObject {
     private var restartWorkItem: DispatchWorkItem?
     @Published private(set) var ownerAuthorityRefreshInFlight = false
     private var ownerAuthorityRefreshWorkItem: DispatchWorkItem?
+    private var ownerAuthorityReadSequence: UInt64 = 0
     private var ownerAuthorityTransientUntil: Date?
     private var serviceStartLifecyclePending = false
 
@@ -305,9 +306,12 @@ class AppState: ObservableObject {
         }
 
         ownerAuthorityRefreshInFlight = true
+        ownerAuthorityReadSequence += 1
+        let readSequence = ownerAuthorityReadSequence
         client.status { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard readSequence == self.ownerAuthorityReadSequence else { return }
                 self.ownerAuthorityRefreshInFlight = false
                 switch result {
                 case .success(let status):
@@ -433,7 +437,8 @@ class AppState: ObservableObject {
     func startOwnerControl() {
         guard !ownerControlBusy else { return }
         beginOwnerAuthorityTransientPolling(force: true)
-        guard ownerAuthorityState == .disarmed else {
+        guard ownerAuthorityState == .disarmed,
+              let expectedEpoch = ownerAuthorityStatus?.authorityEpoch else {
             serverError = "Owner ARM blocked: authoritative status is not DISARMED."
             refreshOwnerAuthorityStatus()
             return
@@ -452,7 +457,11 @@ class AppState: ObservableObject {
         }
 
         ownerControlBusy = true
-        client.arm { [weak self] result in
+        ownerAuthorityReadSequence += 1
+        ownerAuthorityRefreshInFlight = false
+        ownerAuthorityState = .unknown
+        ownerAuthorityStatus = nil
+        client.arm(expectedAuthorityEpoch: expectedEpoch) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.ownerControlBusy = false
@@ -462,10 +471,9 @@ class AppState: ObservableObject {
                 case .success:
                     self.serverError = nil
                 case .failure(let error):
-                    // ARM failure must not destroy unrelated foreground
-                    // Companion service state. :8200 remains available for
-                    // provisioning/bootstrap/endpoint refresh.
-                    self.serverError = "Owner ARM failed: \(error.localizedDescription)"
+                    self.serverError = (error as? OwnerControlClientError) == .rejected
+                        ? "Owner ARM rejected: \(error.localizedDescription)"
+                        : "Owner ARM delivery uncertain; reconciling authoritative status. \(error.localizedDescription)"
                 }
                 // The POST acknowledgement is not UI authority. Always fetch
                 // the authoritative snapshot after ARM completion.
@@ -494,6 +502,10 @@ class AppState: ObservableObject {
         }
         ownerControlBusy = true
         serverError = nil
+        ownerAuthorityReadSequence += 1
+        ownerAuthorityRefreshInFlight = false
+        ownerAuthorityState = .unknown
+        ownerAuthorityStatus = nil
         client.off { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -504,7 +516,9 @@ class AppState: ObservableObject {
                 case .success:
                     self.serverError = nil
                 case .failure(let error):
-                    self.serverError = "Owner OFF failed: \(error.localizedDescription). Remote authority may still be active."
+                    self.serverError = (error as? OwnerControlClientError) == .rejected
+                        ? "Owner OFF rejected: \(error.localizedDescription)"
+                        : "Owner OFF delivery uncertain; reconciling authoritative status. Remote authority may still be active."
                 }
                 // The POST acknowledgement is not UI authority. Always fetch
                 // the authoritative snapshot after OFF completion.

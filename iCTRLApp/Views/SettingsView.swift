@@ -208,15 +208,15 @@ struct SettingsView: View {
                 HStack {
                     Text("Service")
                     Spacer()
-                    Text(status.serviceState)
+                    Text(status.serviceState ?? "UNKNOWN")
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
                 HStack {
                     Text("Execution Ready")
                     Spacer()
-                    Text(status.executionReady ? "READY" : "NOT READY")
-                        .foregroundColor(status.executionReady ? .green : .secondary)
+                    Text(status.executionReady.map { $0 ? "READY" : "NOT READY" } ?? "UNKNOWN")
+                        .foregroundColor(status.executionReady == true ? .green : .secondary)
                 }
                 HStack {
                     Text("Generation")
