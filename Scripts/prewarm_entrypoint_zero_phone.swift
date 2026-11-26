@@ -17,6 +17,52 @@ import FoundationNetworking
         precondition(warm == "WARM" && !warm.contains("SECRET"))
         precondition(PrewarmMockProtocol.calls == 1)
 
+        // Virtual monotonic time: exercise long/cold behavior without sleeping
+        // or ever reaching a network/device. Every mock rejects other routes.
+        for item in [
+            ("first-status-warm", ["WARM"], 0.2, "WARM", 0),
+            ("multiple-status-warm", ["IN_FLIGHT", "IN_FLIGHT", "WARM"], 0.2, "WARM", 0),
+            ("factual-failed", ["FAILED"], 0.2, "FAILED", 0),
+            ("long-warm", ["IN_FLIGHT", "IN_FLIGHT", "WARM"], 25.0, "WARM", 1),
+            ("long-failed", ["IN_FLIGHT", "IN_FLIGHT", "FAILED"], 25.0, "FAILED", 1),
+            ("warm-at-threshold", ["IN_FLIGHT", "WARM"], 25.0, "WARM", 0),
+            ("deadline", ["IN_FLIGHT"], 44.0, "UNKNOWN", 0),
+            ("declined-continuation", ["IN_FLIGHT", "IN_FLIGHT"], 25.0, "UNKNOWN", 1),
+            ("status-transport", [], 0.2, "UNKNOWN", 0),
+            ("operation-changed", ["WARM"], 0.2, "UNKNOWN", 0)
+        ] {
+            var time = 0.0, pauses = 0, foregrounds = 0
+            func receipt(_ state: String, operation: String = "2026-11-26T00:00:00Z") -> String {
+                "{\"ok\":true,\"prewarm_state\":\"\(state)\",\"joined_by_user_request\":false,\"trigger_timestamp\":\"\(operation)\"}"
+            }
+            PrewarmMockProtocol.calls = 0; PrewarmMockProtocol.requests = []
+            PrewarmMockProtocol.sequence = [receipt("IN_FLIGHT")] + item.1.map { receipt($0) }
+            if item.0 == "operation-changed" { PrewarmMockProtocol.sequence[1] = receipt("WARM", operation: "2026-11-26T00:00:01Z") }
+            PrewarmMockProtocol.statusError = item.0 == "status-transport" ? URLError(.timedOut) : nil
+            var result = "UNKNOWN"
+            do {
+                result = try await PrewarmIntentOperation.perform {
+                    try await PrewarmClient(credential: credential, session: session, now: { time }, pause: { ns in
+                        precondition(ns > 0 && ns <= PrewarmClient.observationInterval)
+                        pauses += 1; time += item.2
+                    }).submit {
+                        precondition(time >= 25 && time < 44 && PrewarmMockProtocol.requests.last == "GET")
+                        foregrounds += 1
+                        if item.0 == "declined-continuation" { throw NSError(domain: "RAW_SECRET", code: 1) }
+                    }
+                }
+            } catch {
+                precondition(error is PrewarmProductError && !error.localizedDescription.contains("SECRET"))
+                if error.localizedDescription.contains("FAILED") { result = "FAILED" }
+            }
+            precondition(result == item.3 && foregrounds == item.4, item.0)
+            precondition(PrewarmMockProtocol.requests.filter { $0 == "POST" }.count == 1)
+            precondition(PrewarmMockProtocol.requests.dropFirst().allSatisfy { $0 == "GET" })
+            if item.0 == "first-status-warm" { precondition(pauses == 0) }
+            print("PASS \(item.0): \(result), triggers=1, foregrounds=\(foregrounds)")
+        }
+        PrewarmMockProtocol.statusError = nil; PrewarmMockProtocol.sequence = []
+
         for state in [PrewarmCanonicalState.idle, .inFlight, .failed] {
             do { _ = try await PrewarmIntentOperation.perform { state }; fatalError("intent returned non-WARM success") }
             catch { precondition(error is PrewarmProductError) }

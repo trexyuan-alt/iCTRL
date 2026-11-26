@@ -19,20 +19,28 @@ final class PrewarmMockProtocol: URLProtocol {
     static var body = ""
     static var status = 200
     static var error: Error?
+    static var sequence: [String] = []
+    static var requests: [String] = []
+    static var statusError: Error?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
     override func startLoading() {
         Self.calls += 1
-        precondition(request.url!.absoluteString == "https://gateway.invalid/owner/v1/prewarm")
-        precondition(request.httpMethod == "POST" && request.httpBody == nil)
+        let trigger = request.httpMethod == "POST"
+        precondition(request.url!.absoluteString == "https://gateway.invalid/owner/v1/" + (trigger ? "prewarm" : "prewarm-status"))
+        precondition((trigger || request.httpMethod == "GET") && request.httpBody == nil)
+        Self.requests.append(request.httpMethod!)
         precondition(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "a", count: 64))
         precondition(request.value(forHTTPHeaderField: "X-Owner-Identity") == "ictrl-owner-test")
         precondition(request.value(forHTTPHeaderField: "X-Phone-Control-Generation") == nil)
         if let error = Self.error { client?.urlProtocol(self, didFailWithError: error); return }
-        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: "HTTP/1.1", headerFields: [:])!
+        if !trigger, let error = Self.statusError { client?.urlProtocol(self, didFailWithError: error); return }
+        let status = Self.status == 200 && trigger ? 202 : Self.status
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: [:])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(Self.body.utf8))
+        let body = Self.sequence.isEmpty ? Self.body : Self.sequence.removeFirst()
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 }
