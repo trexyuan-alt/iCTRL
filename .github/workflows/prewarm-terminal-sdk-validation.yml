@@ -3,7 +3,7 @@ name: Owner verifier admission Apple SDK validation
 on:
   push:
     branches:
-      - codex/owner-verifier-durability-sdk-20261126
+      - codex/free-render-verifier-sdk-validation-20261126
 
 permissions:
   contents: read
