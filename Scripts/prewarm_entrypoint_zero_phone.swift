@@ -11,6 +11,14 @@ import FoundationNetworking
         let session = URLSession(configuration: config, delegate: PrewarmNoRedirectDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         PrewarmMockProtocol.status = 200
+		PrewarmMockProtocol.statusSequence = [202, 503]
+		PrewarmMockProtocol.sequence = ["{\"ok\":true,\"prewarm_state\":\"IN_FLIGHT\",\"joined_by_user_request\":false,\"trigger_timestamp\":\"2026-11-26T00:00:00Z\"}", "{\"ok\":false,\"error\":\"OWNER_VERIFIER_UNAVAILABLE\"}"]
+		PrewarmMockProtocol.requests = []
+		do { _ = try await PrewarmClient(credential: credential, session: session).submit(); fatalError("accepted operation status failure accepted") }
+		catch PrewarmProductError.completionUnconfirmed {}
+		catch { fatalError("accepted operation was relabeled as admission failure") }
+		precondition(PrewarmMockProtocol.requests == ["POST", "GET"])
+		print("PASS verifier unavailable / admission rejection / no-ack uncertainty / accepted terminal uncertainty are distinct; no retry or recovery")
         PrewarmMockProtocol.calls = 0
         PrewarmMockProtocol.body = "{\"ok\":true,\"accepted\":true,\"prewarm_state\":\"WARM\",\"joined_by_user_request\":false,\"error_type\":\"RAW_SECRET\"}"
         let warm = try await PrewarmIntentOperation.perform { try await PrewarmClient(credential: credential, session: session).submit() }
@@ -62,6 +70,22 @@ import FoundationNetworking
             print("PASS \(item.0): \(result), triggers=1, foregrounds=\(foregrounds)")
         }
         PrewarmMockProtocol.statusError = nil; PrewarmMockProtocol.sequence = []
+
+        for entry in [(503, "OWNER_VERIFIER_UNAVAILABLE", "verifier"), (403, "RAW_SECRET", "rejected"), (502, "RAW_SECRET", "unconfirmed")] {
+            PrewarmMockProtocol.status = entry.0; PrewarmMockProtocol.calls = 0; PrewarmMockProtocol.requests = []
+            PrewarmMockProtocol.body = "{\"ok\":false,\"error\":\"\(entry.1)\"}"
+            do { _ = try await PrewarmClient(credential: credential, session: session).submit(); fatalError("admission failure accepted") }
+            catch {
+                guard let error = error as? PrewarmProductError else { fatalError("raw admission error") }
+                switch (entry.2,error) {
+                case ("verifier",.verifierUnavailable), ("rejected",.admissionFailed), ("unconfirmed",.admissionUnconfirmed): break
+                default: fatalError("admission and terminal semantics collapsed")
+                }
+                precondition(!error.localizedDescription.contains("SECRET") && !error.localizedDescription.contains("terminal"))
+            }
+            precondition(PrewarmMockProtocol.requests == ["POST"])
+        }
+        PrewarmMockProtocol.status = 200
 
         for state in [PrewarmCanonicalState.idle, .inFlight, .failed] {
             do { _ = try await PrewarmIntentOperation.perform { state }; fatalError("intent returned non-WARM success") }

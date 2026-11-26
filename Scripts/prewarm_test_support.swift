@@ -22,6 +22,7 @@ final class PrewarmMockProtocol: URLProtocol {
     static var sequence: [String] = []
     static var requests: [String] = []
     static var statusError: Error?
+    static var statusSequence: [Int] = []
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
@@ -36,7 +37,7 @@ final class PrewarmMockProtocol: URLProtocol {
         precondition(request.value(forHTTPHeaderField: "X-Phone-Control-Generation") == nil)
         if let error = Self.error { client?.urlProtocol(self, didFailWithError: error); return }
         if !trigger, let error = Self.statusError { client?.urlProtocol(self, didFailWithError: error); return }
-        let status = Self.status == 200 && trigger ? 202 : Self.status
+        let status = Self.statusSequence.isEmpty ? (Self.status == 200 && trigger ? 202 : Self.status) : Self.statusSequence.removeFirst()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: [:])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         let body = Self.sequence.isEmpty ? Self.body : Self.sequence.removeFirst()

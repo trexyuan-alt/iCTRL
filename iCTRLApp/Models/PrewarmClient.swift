@@ -8,10 +8,13 @@ enum PrewarmCanonicalState: String, Decodable, CaseIterable {
 }
 
 enum PrewarmProductError: LocalizedError {
-    case configurationUnavailable, completionUnconfirmed, canonicalFailed
+    case configurationUnavailable, admissionFailed, admissionUnconfirmed, verifierUnavailable, completionUnconfirmed, canonicalFailed
     var errorDescription: String? {
         switch self {
         case .configurationUnavailable: return "PREWARM configuration is unavailable."
+        case .admissionFailed: return "PREWARM admission was rejected before canonical acceptance."
+        case .admissionUnconfirmed: return "PREWARM admission could not be confirmed; no canonical acceptance was observed."
+        case .verifierUnavailable: return "PREWARM admission is blocked because the server Owner verifier is unavailable."
         case .completionUnconfirmed: return "PREWARM terminal completion could not be factually confirmed."
         case .canonicalFailed: return "PREWARM reached canonical FAILED."
         }
@@ -114,8 +117,9 @@ final class PrewarmClient {
     }
 
     private func request(base: URL, method: String, endpoint: String, status: Int, started: TimeInterval) async throws -> Receipt {
+        let uncertain: PrewarmProductError = method == "POST" ? .admissionUnconfirmed : .completionUnconfirmed
         let remaining = Self.observationDeadline - (now() - started)
-        guard remaining > 0, !Task.isCancelled else { throw PrewarmProductError.completionUnconfirmed }
+        guard remaining > 0, !Task.isCancelled else { throw uncertain }
         let url = base.appendingPathComponent("owner").appendingPathComponent("v1").appendingPathComponent(endpoint)
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -126,13 +130,24 @@ final class PrewarmClient {
         let data: Data
         let response: URLResponse
         do { (data, response) = try await session.data(for: request) }
-        catch { throw PrewarmProductError.completionUnconfirmed }
+        catch { throw uncertain }
+        if method == "POST", let http = response as? HTTPURLResponse, http.statusCode != status {
+            if http.statusCode == 503, data.count <= 16384,
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               Set(object.keys) == Set(["ok", "error"]),
+               let failure = try? JSONDecoder().decode(AdmissionFailure.self, from: data),
+               !failure.ok, failure.error == "OWNER_VERIFIER_UNAVAILABLE" {
+                throw PrewarmProductError.verifierUnavailable
+            }
+            if http.statusCode == 403 || http.statusCode == 400 { throw PrewarmProductError.admissionFailed }
+            throw PrewarmProductError.admissionUnconfirmed
+        }
         guard now() - started < Self.observationDeadline,
               let http = response as? HTTPURLResponse, http.statusCode == status, data.count <= 16384,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: Self.resultKeys),
               let result = try? JSONDecoder().decode(Receipt.self, from: data), result.ok else {
-            throw PrewarmProductError.completionUnconfirmed
+            throw uncertain
         }
         return result
     }
@@ -146,6 +161,7 @@ final class PrewarmClient {
             case ok, prewarmState = "prewarm_state", joined = "joined_by_user_request", triggerTimestamp = "trigger_timestamp"
         }
     }
+    private struct AdmissionFailure: Decodable { let ok: Bool; let error: String }
     private static let resultKeys: Set<String> = [
         "ok", "accepted", "collapsed", "prewarm_state", "joined_by_user_request",
         "trigger_timestamp", "bootstrap_started_timestamp", "bootstrap_completed_timestamp",

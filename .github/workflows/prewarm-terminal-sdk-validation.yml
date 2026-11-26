@@ -1,9 +1,9 @@
-name: PREWARM terminal Apple SDK validation
+name: Owner verifier admission Apple SDK validation
 
 on:
   push:
     branches:
-      - codex/prewarm-terminal-sdk-validation-20261126
+      - codex/owner-verifier-durability-sdk-20261126
 
 permissions:
   contents: read
