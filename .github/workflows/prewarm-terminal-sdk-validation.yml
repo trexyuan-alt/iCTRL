@@ -1,0 +1,78 @@
+name: PREWARM terminal Apple SDK validation
+
+on:
+  push:
+    branches:
+      - prewarm-terminal-sdk-validate-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  apple-sdk-validation:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Record Apple SDK environment
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          swiftc --version
+
+      - name: Run PREWARM zero-phone source tests on macOS
+        run: |
+          set -euo pipefail
+          sh Scripts/check-prewarm.sh
+
+      - name: Generate normal iCTRL project
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          bash Scripts/fetch-idevice.sh
+          xcodegen generate --quiet
+          ./Scripts/stamp-build.sh
+          grep -F 'PrewarmIntent.swift' iCTRL.xcodeproj/project.pbxproj
+          grep -F 'PrewarmClient.swift' iCTRL.xcodeproj/project.pbxproj
+
+      - name: Build normal iCTRL target with Apple SDK, no signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_PREFIX="$(sed -nE 's/^ICTRL_BUNDLE_PREFIX[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' Config/Signing.xcconfig)"
+          OUT="$PWD/build/prewarm-sdk-validation"
+          mkdir -p "$OUT"
+          set +e
+          xcodebuild build \
+            -project iCTRL.xcodeproj \
+            -target iCTRL \
+            -configuration Debug \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            ICTRL_BUNDLE_PREFIX="$BUNDLE_PREFIX" \
+            ARCHS=arm64 \
+            CONFIGURATION_BUILD_DIR="$OUT/Debug-iphoneos" \
+            SYMROOT="$OUT" \
+            OBJROOT="$OUT/obj" 2>&1 | tee /tmp/prewarm-xcodebuild.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          test -d "$OUT/Debug-iphoneos/iCTRL.app"
+          grep -F 'PrewarmIntent.swift' /tmp/prewarm-xcodebuild.log
+          grep -F 'PrewarmClient.swift' /tmp/prewarm-xcodebuild.log
+          grep -F '** BUILD SUCCEEDED **' /tmp/prewarm-xcodebuild.log
+          if find "$OUT" \( -name 'iCTRLUITests-Runner.app' -o -name '*.xctest' \) -print | grep -q .; then
+            echo 'Runner/XCTest artifact unexpectedly produced'
+            exit 1
+          fi
