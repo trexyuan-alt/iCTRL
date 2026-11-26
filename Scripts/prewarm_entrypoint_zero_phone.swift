@@ -82,6 +82,7 @@ import FoundationNetworking
                 default: fatalError("admission and terminal semantics collapsed")
                 }
                 precondition(!error.localizedDescription.contains("SECRET") && !error.localizedDescription.contains("terminal"))
+                if entry.2 == "verifier" { precondition(error.localizedDescription.contains("Open iCTRL, then run PREWARM again.")) }
             }
             precondition(PrewarmMockProtocol.requests == ["POST"])
         }

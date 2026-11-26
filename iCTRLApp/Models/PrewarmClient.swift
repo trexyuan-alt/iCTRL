@@ -14,7 +14,7 @@ enum PrewarmProductError: LocalizedError {
         case .configurationUnavailable: return "PREWARM configuration is unavailable."
         case .admissionFailed: return "PREWARM admission was rejected before canonical acceptance."
         case .admissionUnconfirmed: return "PREWARM admission could not be confirmed; no canonical acceptance was observed."
-        case .verifierUnavailable: return "PREWARM admission is blocked because the server Owner verifier is unavailable."
+        case .verifierUnavailable: return "Owner verifier restore is required. Open iCTRL, then run PREWARM again."
         case .completionUnconfirmed: return "PREWARM terminal completion could not be factually confirmed."
         case .canonicalFailed: return "PREWARM reached canonical FAILED."
         }
