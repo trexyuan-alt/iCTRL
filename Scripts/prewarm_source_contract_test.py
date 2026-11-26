@@ -33,7 +33,7 @@ class PrewarmSourceContract(unittest.TestCase):
         self.assertEqual(client.count('session.data(for: request)'), 1)
         self.assertEqual(client.count('method: "POST", endpoint: "prewarm"'), 1)
         self.assertEqual(client.count('method: "GET", endpoint: "prewarm-status"'), 1)
-        self.assertIn('static let observationDeadline: TimeInterval = 44', client)
+        self.assertIn('static let observationDeadline: TimeInterval = 48', client)
         self.assertIn('static let foregroundThreshold: TimeInterval = 25', client)
         self.assertIn('static let observationInterval: UInt64 = 200_000_000', client)
         self.assertIn('status.triggerTimestamp == operation', client)

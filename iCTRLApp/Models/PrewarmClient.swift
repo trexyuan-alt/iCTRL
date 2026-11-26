@@ -30,7 +30,9 @@ final class PrewarmNoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchec
 // Existing owner-control-v2 Keychain authority, loaded read-only. The canonical
 // engine owns all PREWARM states; this client only observes its factual receipts.
 final class PrewarmClient {
-    static let observationDeadline: TimeInterval = 44
+    // 40s canonical run + up to 3s trigger transport + 200ms poll interval
+    // + up to 3s terminal transport, rounded to a bounded 48s total window.
+    static let observationDeadline: TimeInterval = 48
     static let foregroundThreshold: TimeInterval = 25
     static let observationInterval: UInt64 = 200_000_000
     private let credential: OwnerControlCredential

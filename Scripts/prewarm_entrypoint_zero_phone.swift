@@ -26,7 +26,7 @@ import FoundationNetworking
             ("long-warm", ["IN_FLIGHT", "IN_FLIGHT", "WARM"], 25.0, "WARM", 1),
             ("long-failed", ["IN_FLIGHT", "IN_FLIGHT", "FAILED"], 25.0, "FAILED", 1),
             ("warm-at-threshold", ["IN_FLIGHT", "WARM"], 25.0, "WARM", 0),
-            ("deadline", ["IN_FLIGHT"], 44.0, "UNKNOWN", 0),
+            ("deadline", ["IN_FLIGHT"], 48.0, "UNKNOWN", 0),
             ("declined-continuation", ["IN_FLIGHT", "IN_FLIGHT"], 25.0, "UNKNOWN", 1),
             ("status-transport", [], 0.2, "UNKNOWN", 0),
             ("operation-changed", ["WARM"], 0.2, "UNKNOWN", 0)
@@ -46,7 +46,7 @@ import FoundationNetworking
                         precondition(ns > 0 && ns <= PrewarmClient.observationInterval)
                         pauses += 1; time += item.2
                     }).submit {
-                        precondition(time >= 25 && time < 44 && PrewarmMockProtocol.requests.last == "GET")
+                        precondition(time >= 25 && time < 48 && PrewarmMockProtocol.requests.last == "GET")
                         foregrounds += 1
                         if item.0 == "declined-continuation" { throw NSError(domain: "RAW_SECRET", code: 1) }
                     }
