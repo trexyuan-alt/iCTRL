@@ -6,6 +6,7 @@ on:
       - owner-arm-ui-20261114
       - owner-arm-authoritative-refresh-20261117
       - owner-lifecycle-client-wiring-20261119
+      - codex/free-render-final-ipa-package-20261127
 
 permissions:
   contents: read
@@ -15,8 +16,10 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
-      - name: Checkout exact branch commit
+      - name: Checkout exact validated product source
         uses: actions/checkout@v4
+        with:
+          ref: eef09644c1dc6422109c87d94fdc932577af8cf0
 
       - name: Verify ZERO-XCTEST lifecycle source
         run: |
