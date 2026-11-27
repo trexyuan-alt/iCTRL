@@ -7,6 +7,7 @@ enum OwnerControlClientError: LocalizedError, Equatable {
     case configurationUnavailable
     case endpointInvalid
     case transportFailed
+    case verifierUnavailable
     case rejected
     case provisioningFailed
 
@@ -18,6 +19,8 @@ enum OwnerControlClientError: LocalizedError, Equatable {
             return "RemotePairing endpoint snapshot is invalid."
         case .transportFailed:
             return "Owner control response delivery is uncertain; reconciling authoritative status."
+        case .verifierUnavailable:
+            return "Owner verifier unavailable. Run PREWARM to restore Owner verifier."
         case .rejected:
             return "Owner control OOB request was rejected."
         case .provisioningFailed:
@@ -167,6 +170,17 @@ final class OwnerControlClient {
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
         session.dataTask(with: request) { data, response, error in
+            // This exact authenticated status response is definitive, not a
+            // transport ambiguity. Do not infer ARMED/DISARMED or recover here.
+            if error == nil,
+               let http = response as? HTTPURLResponse, http.statusCode == 503,
+               let data,
+               let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               envelope["ok"] as? Bool == false,
+               envelope["error"] as? String == "owner verifier unavailable" {
+                completion(.failure(OwnerControlClientError.verifierUnavailable))
+                return
+            }
             guard error == nil,
                   let http = response as? HTTPURLResponse,
                   let data, http.statusCode == 200,

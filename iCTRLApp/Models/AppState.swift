@@ -50,7 +50,7 @@ class AppState: ObservableObject {
 
         if autoStartServer {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.startCompanionService()
+                self?.startServer()
             }
         }
     }
@@ -328,9 +328,15 @@ class AppState: ObservableObject {
                     // Start at most one bounded fast window; after it expires,
                     // keep the old deadline so failures back off to 15 seconds.
                     self.ownerAuthorityStatus = nil
-                    self.ownerAuthorityState = .unknown
-                    self.ownerAuthorityStatusError = "Owner authority status unavailable: \(error.localizedDescription)"
-                    self.beginOwnerAuthorityTransientPolling()
+                    if (error as? OwnerControlClientError) == .verifierUnavailable {
+                        self.ownerAuthorityState = .verifierUnavailable
+                        self.ownerAuthorityStatusError = error.localizedDescription
+                        self.ownerAuthorityTransientUntil = nil
+                    } else {
+                        self.ownerAuthorityState = .unknown
+                        self.ownerAuthorityStatusError = "Owner authority status unavailable: \(error.localizedDescription)"
+                        self.beginOwnerAuthorityTransientPolling()
+                    }
                 }
                 self.scheduleOwnerAuthorityRefreshIfNeeded()
             }
@@ -341,7 +347,9 @@ class AppState: ObservableObject {
     /// at most 20 seconds; stable or exhausted states use 15 seconds.
     private func scheduleOwnerAuthorityRefreshIfNeeded() {
         ownerAuthorityRefreshWorkItem?.cancel()
-        guard appIsActive else {
+        // A definitive missing verifier requires an Owner-chosen recovery.
+        // Do not automatically retry this response or trigger PREWARM.
+        guard appIsActive, ownerAuthorityState != .verifierUnavailable else {
             ownerAuthorityRefreshWorkItem = nil
             return
         }

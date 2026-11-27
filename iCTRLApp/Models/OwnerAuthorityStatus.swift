@@ -2,6 +2,7 @@ import Foundation
 
 enum OwnerAuthorityUIState: Equatable {
     case unknown
+    case verifierUnavailable
     case disarmed
     case armed
 }

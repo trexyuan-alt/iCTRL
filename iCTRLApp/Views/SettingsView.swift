@@ -192,6 +192,9 @@ struct SettingsView: View {
                         case .unknown:
                             Circle().fill(.orange).frame(width: 8, height: 8)
                             Text("UNKNOWN").foregroundColor(.orange)
+                        case .verifierUnavailable:
+                            Circle().fill(.orange).frame(width: 8, height: 8)
+                            Text("VERIFIER UNAVAILABLE").foregroundColor(.orange)
                         }
                     }
                 }
@@ -242,7 +245,7 @@ struct SettingsView: View {
                     Label("Owner ARM", systemImage: "power.circle.fill")
                 }
                 .disabled(appState.ownerControlBusy || !appState.ownerControlProvisioned)
-            case .unknown:
+            case .unknown, .verifierUnavailable:
                 EmptyView()
             }
 
