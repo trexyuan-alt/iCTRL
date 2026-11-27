@@ -7,7 +7,7 @@ let now = Date(timeIntervalSince1970: 1_000)
 let fast = now.addingTimeInterval(OwnerAuthorityPollingPolicy.transientWindow)
 let expired = now.addingTimeInterval(-1)
 let armed = OwnerAuthorityStatus(ownerArmed: true, authorityEpoch: 1, armedGeneration: 3,
-    absoluteExpiresAt: "2027-01-01T00:00:00Z", controlState: "RUNNING", controlGeneration: 3)
+    absoluteExpiresAt: "", controlState: "RUNNING", controlGeneration: 3)
 let disarmed = OwnerAuthorityStatus(ownerArmed: false, authorityEpoch: 2, armedGeneration: 0,
     absoluteExpiresAt: "", controlState: "STOPPED", controlGeneration: 4)
 var unavailableRSD = armed

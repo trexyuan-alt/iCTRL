@@ -42,7 +42,7 @@ func makeClient() -> OwnerControlClient {
         session: URLSession(configuration: config))
 }
 let armedBody = """
-{"ok":true,"owner_armed":true,"authority_epoch":7,"armed_generation":3,"absolute_expires_at":"2027-01-01T00:00:00Z","control_state":"RUNNING","control_generation":3}
+{"ok":true,"owner_armed":true,"authority_epoch":7,"armed_generation":3,"absolute_expires_at":"","control_state":"RUNNING","control_generation":3}
 """
 let disarmedBody = """
 {"ok":true,"owner_armed":false,"authority_epoch":8,"armed_generation":0,"absolute_expires_at":"","control_state":"STOPPED","control_generation":4}
@@ -188,9 +188,15 @@ do {
     print("PASS genuine transport failure remains uncertain; unsupported responses retain previous mapping")
 }
 for (body, state) in [(armedBody, OwnerAuthorityUIState.armed), (disarmedBody, .disarmed)] {
-    StartupProtocol.handler = { proto in record(proto); proto.reply(200, body) }
-    let app = AppState(client: makeClient(), initial: armed)
-    app.refreshOwnerAuthorityStatus(); spin { !app.ownerAuthorityRefreshInFlight }
-    expect(app.ownerAuthorityState == state && app.ownerAuthorityStatusError == nil, "successful authority mapping unchanged")
+    for compatibility in ["current", "omitted", "2000-01-01T00:00:00Z", "2027-01-01T00:00:00Z"] {
+        var wire = try! JSONSerialization.jsonObject(with: Data(body.utf8)) as! [String: Any]
+        if compatibility == "omitted" { wire.removeValue(forKey: "absolute_expires_at") }
+        else if compatibility != "current" { wire["absolute_expires_at"] = compatibility }
+        let response = String(data: try! JSONSerialization.data(withJSONObject: wire), encoding: .utf8)!
+        StartupProtocol.handler = { proto in record(proto); proto.reply(200, response) }
+        let app = AppState(client: makeClient(), initial: armed)
+        app.refreshOwnerAuthorityStatus(); spin { !app.ownerAuthorityRefreshInFlight }
+        expect(app.ownerAuthorityState == state && app.ownerAuthorityStatusError == nil, "expiry-inert authenticated authority mapping")
+    }
 }
-print("PASS successful ARMED/DISARMED status mappings unchanged")
+print("PASS CURRENT empty/missing and legacy expiry wire snapshots reach ARMED/DISARMED through actual client/reconciliation")

@@ -31,7 +31,7 @@ func spin(_ predicate: () -> Bool) {
 }
 func snapshot(armed: Bool, epoch: UInt64 = 8, extras: String = "") -> String {
     let binding = armed ? 3 : 0
-    let absolute = armed ? "2027-01-01T00:00:00Z" : ""
+    let absolute = "" // CURRENT authority has no absolute authorization TTL.
     let state = armed ? "RUNNING" : "STOPPED"
     return "{\"ok\":true,\"owner_armed\":\(armed),\"authority_epoch\":\(epoch),\"armed_generation\":\(binding),\"absolute_expires_at\":\"\(absolute)\",\"control_state\":\"\(state)\",\"control_generation\":\(armed ? 3 : 4)\(extras)}"
 }

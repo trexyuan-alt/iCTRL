@@ -11,7 +11,8 @@ struct OwnerAuthorityStatus: Decodable, Equatable {
     let ownerArmed: Bool
     let authorityEpoch: UInt64
     let armedGeneration: UInt64
-    let absoluteExpiresAt: String
+    // Inert compatibility field; absent/empty/legacy values grant no authority.
+    let absoluteExpiresAt: String?
     let controlState: String
     let controlGeneration: UInt64
     // Separate optional observations; absence says nothing about permission.
@@ -32,10 +33,9 @@ struct OwnerAuthorityStatus: Decodable, Equatable {
         if ownerArmed {
             guard authorityEpoch > 0, armedGeneration > 0,
                   armedGeneration <= controlGeneration,
-                  controlState != "RUNNING" || armedGeneration == controlGeneration,
-                  !absoluteExpiresAt.isEmpty else { return .unknown }
+                  controlState != "RUNNING" || armedGeneration == controlGeneration else { return .unknown }
             return .armed
         }
-        return armedGeneration == 0 && absoluteExpiresAt.isEmpty ? .disarmed : .unknown
+        return armedGeneration == 0 ? .disarmed : .unknown
     }
 }
