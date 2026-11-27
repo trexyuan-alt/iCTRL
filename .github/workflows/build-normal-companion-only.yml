@@ -6,6 +6,7 @@ on:
       - owner-arm-ui-20261114
       - owner-arm-authoritative-refresh-20261117
       - owner-lifecycle-client-wiring-20261119
+      - codex/ictrl-autostart-verifier-noexpiry-final-ipa-20261127
 
 permissions:
   contents: read
@@ -15,12 +16,20 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
-      - name: Checkout exact branch commit
+      - name: Checkout exact accepted product source
         uses: actions/checkout@v4
+        with:
+          ref: 9f1d18c96c010541cc3d6138c7b5f9b1b4c7bd07
 
       - name: Verify ZERO-XCTEST lifecycle source
         run: |
           grep -F 'func reconcileCompanionService()' iCTRLApp/Models/AppState.swift
+          grep -A6 -F 'if autoStartServer {' iCTRLApp/Models/AppState.swift | grep -F 'self?.startServer()'
+          ! grep -A6 -F 'if autoStartServer {' iCTRLApp/Models/AppState.swift | grep -F 'startCompanionService()'
+          grep -F 'case verifierUnavailable' iCTRLApp/Models/OwnerAuthorityStatus.swift
+          grep -F 'case .verifierUnavailable:' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'Owner verifier unavailable. Run PREWARM to restore Owner verifier.' iCTRLApp/Models/OwnerControlClient.swift
+          grep -F 'let absoluteExpiresAt: String?' iCTRLApp/Models/OwnerAuthorityStatus.swift
           grep -F 'OwnerControlCredentialStore.ensure(baseURL: baseURL)' iCTRLApp/Models/AppState.swift
           grep -F 'static func ensure(baseURL raw: String)' iCTRLApp/Models/OwnerControlClient.swift
           grep -F 'appState.startCompanionService()' iCTRLApp/Views/SettingsView.swift
@@ -73,10 +82,20 @@ jobs:
           }
           let status = try decode(factual)
           precondition(status.ownerArmed == false && status.authorityEpoch == 1)
-          precondition(status.armedGeneration == 0 && status.absoluteExpiresAt.isEmpty)
+          precondition(status.armedGeneration == 0 && status.absoluteExpiresAt == "")
           precondition(status.controlState == "STOPPED" && status.controlGeneration == 1)
           precondition(status.uiState == .disarmed)
-          for key in factual.keys {
+          var omittedExpiry = factual
+          omittedExpiry.removeValue(forKey: "absolute_expires_at")
+          let omittedStatus = try decode(omittedExpiry)
+          precondition(omittedStatus.absoluteExpiresAt == nil && omittedStatus.uiState == .disarmed)
+          let currentArmed: [String: Any] = [
+              "owner_armed": true, "authority_epoch": 2,
+              "armed_generation": 2,
+              "control_state": "RUNNING", "control_generation": 2
+          ]
+          precondition(try decode(currentArmed).uiState == .armed)
+          for key in factual.keys where key != "absolute_expires_at" {
               var missing = factual
               missing.removeValue(forKey: key)
               precondition((try? decode(missing)) == nil, "Required authority field: \(key)")
