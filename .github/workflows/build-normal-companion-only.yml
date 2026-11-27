@@ -94,7 +94,8 @@ jobs:
               "armed_generation": 2,
               "control_state": "RUNNING", "control_generation": 2
           ]
-          precondition(try decode(currentArmed).uiState == .armed)
+          let currentArmedStatus = try decode(currentArmed)
+          precondition(currentArmedStatus.uiState == .armed)
           for key in factual.keys where key != "absolute_expires_at" {
               var missing = factual
               missing.removeValue(forKey: key)
